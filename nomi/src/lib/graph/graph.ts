@@ -13,6 +13,7 @@ import {
   alreadyPlacedNode,
   givePossibleOptions,
   resolveSelectionNode,
+  greetingNode,
 } from "./nodes";
 
 const builder = new StateGraph(GraphState)
@@ -26,8 +27,10 @@ const builder = new StateGraph(GraphState)
   .addNode("ready_confirmation", readyConfirmationNode)
   .addNode("cancel_confirmation", cancelConfirmationNode)
   // .addNode("expense", expenseNode)
+  .addNode("greeting", greetingNode)
   .addNode("other", otherNode)
   .addNode("already_placed", alreadyPlacedNode)
+
   .addEdge(START, "classify")
   .addConditionalEdges("classify", (state: State) => {
     const mutatingIntents = ["add_item", "remove_item", "change_quantity"];
@@ -58,6 +61,8 @@ const builder = new StateGraph(GraphState)
         return "cancel_confirmation";
       case "expense_request":
         return "expense";
+      case "greeting":
+        return "greeting";
       default:
         return "other";
     }
@@ -70,6 +75,7 @@ const builder = new StateGraph(GraphState)
   .addEdge("ready_confirmation", END)
   .addEdge("cancel_confirmation", END)
   // .addEdge("expense", END)
+  .addEdge("greeting", END)
   .addEdge("other", END)
   .addEdge("already_placed", END);
 

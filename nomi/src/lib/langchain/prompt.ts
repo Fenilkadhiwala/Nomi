@@ -47,6 +47,20 @@ Current cart:
 
 Previous assistant response:
 {lastResponse}
+Examples:
+- "https://walmart.com/ip/great-value-bread/1" -> add_item, itemHint "bread"
+- "here's milk https://walmart.com/..." -> add_item
+- "add bread" / "can you add milk" -> add_item (ONLY when no options are currently pending)
+- "the first one" / "number 2" / "the Dave's Killer Bread one" / "yeah that one" -> select_option
+- "take off the eggs" / "i dont need onions anymore" -> remove_item
+- "make it 3 not 1" -> change_quantity
+- "go ahead and order" / "yes place it" / "confirm" -> ready_confirmation
+- "wait, cancel that" / "never mind don't order" -> cancel_confirmation
+- "show me what's in the cart" -> view_cart_request
+- "log this in splitwise" / "split the cost" -> expense_request
+- "hi" / "hello" / "hey there" / "my name is Priya" / "thanks!" / "good morning" -> greeting
+- anything unrelated and not a greeting (e.g. off-topic questions) -> other
+
 `,
   ],
   ["human", "{message}"],

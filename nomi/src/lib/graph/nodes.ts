@@ -16,6 +16,7 @@ const messageClassificationSchema = z.object({
     "cancel_confirmation",
     "view_cart_request",
     "expense_request",
+    "greeting",
     "other",
   ]),
   url: z.string().nullable(),
@@ -48,6 +49,21 @@ export async function classifyNode(state: State): Promise<Partial<State>> {
   console.log("state here", returnedState);
 
   return returnedState;
+}
+
+const greetingPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `You're a friendly household grocery-ordering assistant. The user just sent a greeting or casual message (not an order-related request). Respond warmly in one or two short, casual sentences. If they mentioned their name, acknowledge it naturally. Then briefly mention you can help them add items to the shared cart, view the cart, place the order, or split expenses — without sounding like a rigid menu of commands.`,
+  ],
+  ["human", "{message}"],
+]);
+
+const greetingChain = greetingPrompt.pipe(llm).pipe(new StringOutputParser());
+
+export async function greetingNode(state: State): Promise<Partial<State>> {
+  const lastResponse = await greetingChain.invoke({ message: state.message });
+  return { lastResponse };
 }
 
 const optionsResponsePrompt = ChatPromptTemplate.fromMessages([
