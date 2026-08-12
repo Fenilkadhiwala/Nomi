@@ -53,7 +53,7 @@ Examples:
 - "add bread" / "can you add milk" -> add_item (ONLY when no options are currently pending)
 - "the first one" / "number 2" / "the Dave's Killer Bread one" / "yeah that one" -> select_option
 - "take off the eggs" / "i dont need onions anymore" -> remove_item
-- "make it 3 not 1" -> change_quantity
+- "make it 3 not 1 / can you make bread 1 instead of 2 / remove one bag" -> change_quantity
 - "go ahead and order" / "yes place it" / "confirm" -> ready_confirmation
 - "wait, cancel that" / "never mind don't order" -> cancel_confirmation
 - "show me what's in the cart" -> view_cart_request

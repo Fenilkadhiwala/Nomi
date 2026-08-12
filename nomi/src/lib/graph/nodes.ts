@@ -66,16 +66,30 @@ export async function greetingNode(state: State): Promise<Partial<State>> {
   return { lastResponse };
 }
 
+const optionsSchema = z.object({
+  quantity: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe(
+      "The quantity the user wants, if mentioned (e.g. 'two breads' -> 2). Null if not mentioned — default to 1 in that case.",
+    ),
+});
+
 const optionsResponsePrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    `You're a friendly household grocery-ordering assistant. A user searched for an item and here are the matching product options from the catalog. Present them in a short, casual, easy-to-scan way (like a numbered list), so the user can reply with which one they want (e.g. "the first one" or the product name). Don't invent details not given to you — only use the name, brand, pack size, and price provided.`,
+    `You're a friendly household grocery-ordering assistant. A user searched for an item and here are the matching product options from the catalog. Present them in a short, casual, easy-to-scan way (like a numbered list), so the user can reply with which one they want (e.g. "the first one" or the product name). Don't invent details not given to you — only use the name, brand, pack size, and price provided. Also note the quantity they mentioned, if any, so you can reflect it back (e.g. "how many of the Kerrygold — looks like you want 2?").`,
   ],
   [
     "human",
     `User searched for: {itemHint}
 Matching options:
-{optionsList}`,
+{optionsList}
+
+User's message: {message}
+`,
   ],
 ]);
 
@@ -83,17 +97,32 @@ const optionsChain = optionsResponsePrompt
   .pipe(llm)
   .pipe(new StringOutputParser());
 
+const quantityExtractionPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `Extract the quantity the user wants from their message, if mentioned - e.g. "add two breads" -> quantity 2, "three of the Kerrygold one" -> quantity 3. Only extract a number that clearly refers to how many of the item they want — not a price, not an option number. Return null if no quantity is mentioned (defaults to 1 elsewhere).`,
+  ],
+  ["human", "{message}"],
+]);
+
+const quantityExtractModel = llm.withStructuredOutput(optionsSchema, {
+  name: "extract_quantity",
+});
+
+const quantityChain = quantityExtractionPrompt.pipe(quantityExtractModel);
+
 export async function givePossibleOptions(
   state: State,
 ): Promise<Partial<State>> {
   if (state.intent !== "add_item" || !state.itemHint) return {};
+
   const { rows: allRows } = await pool.query(
     `SELECT *, similarity(search_text, $1) AS score
-   FROM products
-   WHERE $2 = ANY(keywords)
-      OR similarity(search_text, $1) > 0.2
-   ORDER BY score DESC
-   LIMIT 5`,
+     FROM products
+     WHERE $2 = ANY(keywords)
+        OR similarity(search_text, $1) > 0.2
+     ORDER BY score DESC
+     LIMIT 5`,
     [state.itemHint, state.itemHint.toLowerCase()],
   );
 
@@ -106,6 +135,11 @@ export async function givePossibleOptions(
     };
   }
 
+  const { quantity: extractedQuantity } = await quantityChain.invoke({
+    message: state.message,
+  });
+  const quantity = extractedQuantity ?? 1;
+
   if (rows.length === 1) {
     const selected = rows[0];
     const newItem: CartItem = {
@@ -113,14 +147,14 @@ export async function givePossibleOptions(
       productId: selected.id,
       name: selected.name,
       priceCents: selected.price_cents,
-      quantity: 1,
+      quantity,
       addedBy: state.senderId,
     };
     return {
       items: [...state.items, newItem],
       pendingOptions: [],
       pendingAction: "none",
-      lastResponse: `Added "${selected.brand ? selected.brand + " " : ""}${selected.name}" ($${(selected.price_cents / 100).toFixed(2)}) for ${state.senderId}.`,
+      lastResponse: `Added ${quantity} × "${selected.brand ? selected.brand + " " : ""}${selected.name}" ($${((selected.price_cents * quantity) / 100).toFixed(2)}) for ${state.senderId}.`,
     };
   }
 
@@ -134,11 +168,13 @@ export async function givePossibleOptions(
   const lastResponse = await optionsChain.invoke({
     itemHint: state.itemHint,
     optionsList,
+    message: state.message,
   });
 
   return {
     pendingAction: "select_product",
     pendingOptions: rows,
+    pendingQuantity: quantity,
     lastResponse,
   };
 }
@@ -149,11 +185,23 @@ const selectionSchema = z.object({
     .describe(
       "0-based index of the option the user is referring to, or null if none match clearly",
     ),
+  quantity: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe(
+      "The quantity the user wants, if mentioned (e.g. 'two breads' -> 2). Null if not mentioned — default to 1 in that case.",
+    ),
 });
 const selectionPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    `The user was shown a numbered list of product options and replied with a message picking one. Match their reply to the correct option by its 0-based index. If you can't confidently tell which one they mean, return null.`,
+    `The user was shown a numbered list of product options and replied with a message picking one.
+
+Match their reply to the correct option by its 0-based index. If you can't confidently tell which one they mean, return null for selectedIndex.
+
+Also extract the quantity they want, if mentioned in their reply — e.g. "add two breads" -> quantity 2, "three of the Kerrygold one" -> quantity 3, "the Dave's Killer one" (no quantity mentioned) -> quantity null. Only extract a number that clearly refers to how many of the item they want, not a price or option number.`,
   ],
   [
     "human",
@@ -179,10 +227,8 @@ export async function resolveSelectionNode(
     };
   }
 
-  // Try cheap deterministic ordinal match first
   let selected: any = "";
-
-  // Fall back to LLM matching for name/brand-based references
+  let quantity = 1;
 
   const optionsList = options
     .map(
@@ -199,6 +245,23 @@ export async function resolveSelectionNode(
   if (result.selectedIndex !== null && options[result.selectedIndex]) {
     selected = options[result.selectedIndex];
   }
+  if (state?.pendingQuantity) {
+    quantity = state.pendingQuantity;
+  } else {
+    // Ordinal match found via cheap path — still worth checking the raw message for a quantity
+    const qtyMatch = state.message.match(/\b(\d+)\b/);
+    const wordQty: Record<string, number> = {
+      two: 2,
+      three: 3,
+      four: 4,
+      five: 5,
+    };
+    const wordMatch = Object.keys(wordQty).find((w) =>
+      state.message.toLowerCase().includes(w),
+    );
+    if (qtyMatch) quantity = parseInt(qtyMatch[1], 10);
+    else if (wordMatch) quantity = wordQty[wordMatch];
+  }
 
   if (!selected) {
     return {
@@ -211,9 +274,11 @@ export async function resolveSelectionNode(
     productId: selected.id,
     name: selected.name,
     priceCents: selected.price_cents,
-    quantity: 1,
+    quantity,
     addedBy: state.senderId,
   };
+
+  console.log("new items", newItem);
 
   return {
     items: [...state.items, newItem],
@@ -237,17 +302,116 @@ export function removeItemNode(state: State): Partial<State> {
   };
 }
 
-export function changeQuantityNode(state: State): Partial<State> {
+const changeQuantitySchema = z.object({
+  itemIndex: z
+    .number()
+    .nullable()
+    .describe(
+      "0-based index into the current cart of the item the user is referring to. Null if it doesn't clearly match any cart item.",
+    ),
+  quantityDelta: z
+    .number()
+    .int()
+    .positive()
+    .describe(
+      "The amount to increase or decrease by. If the user gives an absolute number ('make it 3'), calculate the difference from the item's current quantity. If not mentioned, default to 1.",
+    ),
+  type: z.enum(["increase", "decrease"]),
+});
+
+const updateQuantityPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `The user wants to change the quantity of an item already in their household's shared grocery cart.
+
+Given the current cart and the user's message, determine:
+- which cart item they're referring to (by 0-based index)
+- whether they want to increase or decrease its quantity
+- by how much (if they give an absolute target like "make it 3" and the current quantity is 1, that's an increase of 2 — calculate the delta, don't just return the target number)
+
+If the message doesn't clearly match any current cart item, return itemIndex as null.`,
+  ],
+  [
+    "human",
+    `Current cart:
+{cart}
+
+User's message: {message}`,
+  ],
+]);
+
+const structuredQuantityLlm = llm.withStructuredOutput(changeQuantitySchema, {
+  name: "change_quantity",
+});
+
+const updateQuantityChain = updateQuantityPrompt.pipe(structuredQuantityLlm);
+
+export async function changeQuantityNode(
+  state: State,
+): Promise<Partial<State>> {
+  if (state.items.length === 0) {
+    return { lastResponse: `Your cart is empty — nothing to update yet.` };
+  }
+
+  const cartText = state.items
+    .map(
+      (i, idx) =>
+        `${idx}. ${i.name} — qty ${i.quantity} (added by ${i.addedBy})`,
+    )
+    .join("\n");
+
+  const result = await updateQuantityChain.invoke({
+    cart: cartText,
+    message: state.message,
+  });
+
+  if (result.itemIndex === null || !state.items[result.itemIndex]) {
+    return {
+      lastResponse: `Not sure which item you meant — could you name it or say "the first one"?`,
+    };
+  }
+
+  const targetItem = state.items[result.itemIndex];
+  const delta =
+    result.type === "increase" ? result.quantityDelta : -result.quantityDelta;
+  const newQuantity = Math.max(0, targetItem.quantity + delta);
+
+  const updatedItems = state.items.map((item, idx) =>
+    idx === result.itemIndex ? { ...item, quantity: newQuantity } : item,
+  );
+
+  if (newQuantity === 0) {
+    return {
+      items: updatedItems.filter((_, idx) => idx !== result.itemIndex),
+      lastResponse: `Removed "${targetItem.name}" from the cart (quantity reached 0).`,
+    };
+  }
+
   return {
-    lastResponse: `(TODO) Would update quantity for "${state.itemHint}".`,
+    items: updatedItems,
+    lastResponse: `Updated "${targetItem.name}" to qty ${newQuantity} for ${targetItem.addedBy}.`,
   };
 }
 
-export function viewCartNode(state: State): Partial<State> {
-  const summary = state.items
-    .map((i) => `- ${i.name} (added by ${i.addedBy})`)
-    .join("\n");
-  return { lastResponse: `Current cart:\n${summary || "(empty)"}` };
+const cartListingPrompt = ChatPromptTemplate?.fromMessages([
+  [
+    "system",
+    `You're a friendly household grocery-ordering assistant, A user is requesting to view the items of the cart. Here is the cart, Present the cart items with quantity and with the senderId in a way that is very easy to read and user feels like he is viewing it in an e commerce website and always put the grand total for all the products in the end `,
+  ],
+  "human",
+  `Cart Items: {cartItems}
+  `,
+]);
+
+const cartListingChain = cartListingPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+
+export async function viewCartNode(state: State): Promise<Partial<State>> {
+  const lastResponse = await cartListingChain?.invoke({
+    cartItems: state?.items,
+  });
+  return { lastResponse };
 }
 
 export function readyConfirmationNode(state: State): Partial<State> {

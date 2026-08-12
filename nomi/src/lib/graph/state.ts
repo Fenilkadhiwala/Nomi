@@ -17,6 +17,7 @@ export const GraphState = Annotation.Root({
   intent: Annotation<string>(),
   url: Annotation<string | null>(),
   itemHint: Annotation<string | null>(),
+
   pendingAction: Annotation<"none" | "select_product" | "confirm_order">({
     reducer: (current, update) => update ?? current,
     default: () => "none",
@@ -36,6 +37,10 @@ export const GraphState = Annotation.Root({
   lastResponse: Annotation<string>({
     reducer: (_current, update) => update,
     default: () => "",
+  }),
+  pendingQuantity: Annotation<number>({
+    reducer: (_current, update) => update,
+    default: () => 1,
   }),
 });
 
