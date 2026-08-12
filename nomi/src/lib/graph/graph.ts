@@ -14,6 +14,7 @@ import {
   givePossibleOptions,
   resolveSelectionNode,
   greetingNode,
+  productsInquiryNode,
 } from "./nodes";
 
 const builder = new StateGraph(GraphState)
@@ -28,6 +29,7 @@ const builder = new StateGraph(GraphState)
   .addNode("cancel_confirmation", cancelConfirmationNode)
   // .addNode("expense", expenseNode)
   .addNode("greeting", greetingNode)
+  .addNode("products_inquiry", productsInquiryNode)
   .addNode("other", otherNode)
   .addNode("already_placed", alreadyPlacedNode)
 
@@ -61,6 +63,8 @@ const builder = new StateGraph(GraphState)
         return "cancel_confirmation";
       case "expense_request":
         return "expense";
+      case "products_inquiry":
+        return "products_inquiry";
       case "greeting":
         return "greeting";
       default:
@@ -76,6 +80,7 @@ const builder = new StateGraph(GraphState)
   .addEdge("cancel_confirmation", END)
   // .addEdge("expense", END)
   .addEdge("greeting", END)
+  .addEdge("products_inquiry", END)
   .addEdge("other", END)
   .addEdge("already_placed", END);
 

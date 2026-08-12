@@ -59,8 +59,8 @@ Examples:
 - "show me what's in the cart" -> view_cart_request
 - "log this in splitwise" / "split the cost" -> expense_request
 - "hi" / "hello" / "hey there" / "my name is Priya" / "thanks!" / "good morning" -> greeting
+- "Do you have choclates?" / "What options do you have in rice?" / "Can i see options in onions" -> products_inquiry
 - anything unrelated and not a greeting (e.g. off-topic questions) -> other
-
 `,
   ],
   ["human", "{message}"],

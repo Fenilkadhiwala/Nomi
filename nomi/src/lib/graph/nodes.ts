@@ -17,6 +17,7 @@ const messageClassificationSchema = z.object({
     "view_cart_request",
     "expense_request",
     "greeting",
+    "products_inquiry",
     "other",
   ]),
   url: z.string().nullable(),
@@ -63,6 +64,68 @@ const greetingChain = greetingPrompt.pipe(llm).pipe(new StringOutputParser());
 
 export async function greetingNode(state: State): Promise<Partial<State>> {
   const lastResponse = await greetingChain.invoke({ message: state.message });
+  return { lastResponse };
+}
+
+const productsInquiryPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `You're a friendly household grocery-ordering assistant. A user is asking what's available for a category or item — just browsing, not necessarily ready to add anything yet. Here are the matching options from the catalog.
+
+Present them in a short, casual, easy-to-scan way (like a numbered list). Since they're asking "do you have X" or "what options for Y", answer in that spirit — e.g. "Yep, we've got a few:" rather than assuming they've already decided to buy.
+
+CRITICAL: Only mention products that appear in the "Matching options" list below. Never invent, assume, or recall products from general knowledge — even real, well-known products — if they aren't explicitly listed. If the options list is empty or doesn't actually contain what the user asked about, say you don't have that item, and don't list anything.
+
+Don't invent details not given to you — only use the name, brand, pack size, and price provided.`,
+  ],
+  [
+    "human",
+    `User asked about: {itemHint}
+Matching options:
+{optionsList}
+
+User's message: {message}
+`,
+  ],
+]);
+
+const productsInquiryChain = productsInquiryPrompt
+  .pipe(llm)
+  .pipe(new StringOutputParser());
+
+export async function productsInquiryNode(
+  state: State,
+): Promise<Partial<State>> {
+  if (!state.itemHint) return {};
+  const { rows: allRows } = await pool.query(
+    `SELECT *, similarity(search_text, $1) AS score
+     FROM products
+     WHERE $2 = ANY(keywords)
+        OR similarity(search_text, $1) > 0.2
+     ORDER BY score DESC
+     LIMIT 5`,
+    [state.itemHint, state.itemHint.toLowerCase()],
+  );
+
+  const topScore = allRows[0]?.score ?? 0;
+  const rows = allRows.filter((r) => r.score >= topScore * 0.5).slice(0, 3);
+  if (rows?.length === 0) {
+    return {
+      lastResponse: `We don't have anything matching "${state.itemHint}" in the catalog right now.`,
+    };
+  }
+  const optionsList = rows
+    .map(
+      (p: any, i: any) =>
+        `${i + 1}. ${p.brand ? p.brand + " " : ""}${p.name} (${p.pack_size}) — $${(p.price_cents / 100).toFixed(2)}`,
+    )
+    .join("\n");
+  console.log("rows", optionsList);
+  const lastResponse = await productsInquiryChain.invoke({
+    itemHint: state.itemHint,
+    optionsList,
+    message: state.message,
+  });
   return { lastResponse };
 }
 
