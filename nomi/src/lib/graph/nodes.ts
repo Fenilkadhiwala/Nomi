@@ -287,18 +287,103 @@ export async function resolveSelectionNode(
     lastResponse: `Added "${selected.brand ? selected.brand + " " : ""}${selected.name}" ($${(selected.price_cents / 100).toFixed(2)}) for ${state.senderId}.`,
   };
 }
+const removeItemSchema = z.object({
+  itemIndices: z
+    .array(z.number())
+    .describe(
+      "0-based indices into the current cart of the item(s) to remove. Can be multiple if the user's message clearly refers to more than one item. Empty array if nothing matches clearly.",
+    ),
+  removeEntirely: z
+    .boolean()
+    .describe(
+      "True if the user wants the item(s) fully removed. False if they only want to reduce the quantity (in that case, check quantityToRemove).",
+    ),
+  quantityToRemove: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe(
+      "If the user wants to remove a partial quantity (e.g. 'remove one of the kitkats'), the amount to subtract. Null if removing the item(s) entirely or not applicable.",
+    ),
+});
 
-export function removeItemNode(state: State): Partial<State> {
-  const target = state.itemHint?.toLowerCase();
-  const matched = state.items.filter((i) =>
-    i.name.toLowerCase().includes(target ?? "___"),
-  );
-  const remaining = state.items.filter((i) => !matched.includes(i));
+const removeItemPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `The user wants to remove an item (or reduce its quantity) from their household's shared grocery cart.
+
+Given the current cart and the user's message, determine:
+- which cart item(s) they're referring to (by 0-based index) — there can be multiple items with similar names added by different people, so match carefully using both the item name and who added it if mentioned
+- whether they want it removed entirely, or just reduced by some quantity
+- if it's a partial reduction, how much to remove
+
+If nothing in the cart clearly matches, return an empty itemIndices array.`,
+  ],
+  [
+    "human",
+    `Current cart:
+{cart}
+
+User's message: {message}`,
+  ],
+]);
+
+const structuredRemoveLlm = llm.withStructuredOutput(removeItemSchema, {
+  name: "remove_item",
+});
+
+const removeItemChain = removeItemPrompt.pipe(structuredRemoveLlm);
+
+export async function removeItemNode(state: State): Promise<Partial<State>> {
+  if (state.items.length === 0) {
+    return { lastResponse: `Your cart is already empty — nothing to remove.` };
+  }
+
+  const cartText = state.items
+    .map(
+      (i, idx) =>
+        `${idx}. ${i.name} — qty ${i.quantity} (added by ${i.addedBy})`,
+    )
+    .join("\n");
+
+  const result = await removeItemChain.invoke({
+    cart: cartText,
+    message: state.message,
+  });
+
+  if (result.itemIndices.length === 0) {
+    return {
+      lastResponse: `Couldn't find that in the cart — could you name the item more specifically?`,
+    };
+  }
+
+  const removedNames: string[] = [];
+  let updatedItems = [...state.items];
+
+  for (const idx of [...result.itemIndices].sort((a, b) => b - a)) {
+    const target = updatedItems[idx];
+    if (!target) continue;
+
+    if (
+      !result.removeEntirely &&
+      result.quantityToRemove &&
+      result.quantityToRemove < target.quantity
+    ) {
+      const newQuantity = target.quantity - result.quantityToRemove;
+      updatedItems[idx] = { ...target, quantity: newQuantity };
+      removedNames.push(
+        `${result.quantityToRemove} × ${target.name} (now ${newQuantity} left)`,
+      );
+    } else {
+      updatedItems.splice(idx, 1);
+      removedNames.push(target.name);
+    }
+  }
+
   return {
-    items: remaining,
-    lastResponse: matched.length
-      ? `Removed: ${matched.map((i) => i.itemHint).join(", ")}.`
-      : `Couldn't find "${state.itemHint}" in the cart.`,
+    items: updatedItems,
+    lastResponse: `Removed: ${removedNames.join(", ")}.`,
   };
 }
 
