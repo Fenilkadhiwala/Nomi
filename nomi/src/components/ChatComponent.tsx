@@ -23,7 +23,7 @@ export const ChatComponent = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
   }, [messages]);
   const SENDER_ID: any = "Nabhi";
-  const THREAD_ID: any = "74_hopkins_ave_at_18";
+  const THREAD_ID: any = "74_hopkins_ave_at_1";
 
   const handleSend = async (text: string) => {
     const userMessage: ChatMessage = {
