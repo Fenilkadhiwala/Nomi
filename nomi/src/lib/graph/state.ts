@@ -1,3 +1,4 @@
+import { BaseMessage } from "@langchain/core/messages";
 import { Annotation } from "@langchain/langgraph";
 
 export type CartItem = {
@@ -41,6 +42,11 @@ export const GraphState = Annotation.Root({
   pendingQuantity: Annotation<number>({
     reducer: (_current, update) => update,
     default: () => 1,
+  }),
+
+  conversationHistory: Annotation<BaseMessage[]>({
+    reducer: (current, update) => (current ?? []).concat(update ?? []),
+    default: () => [],
   }),
 });
 

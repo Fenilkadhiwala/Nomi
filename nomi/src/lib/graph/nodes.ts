@@ -5,6 +5,7 @@ import { classifierPrompt } from "../langchain/prompt";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import { pool } from "../db/pool";
+import { HumanMessage } from "@langchain/core/messages";
 
 const messageClassificationSchema = z.object({
   intent: z.enum([
@@ -30,32 +31,65 @@ const structuredLlm = llm.withStructuredOutput(messageClassificationSchema, {
 
 export async function classifyNode(state: State): Promise<Partial<State>> {
   const chain = classifierPrompt.pipe(structuredLlm);
-  const result = await chain.invoke({
-    message: state.message,
-    status: state.status,
-    pendingOptions: state.pendingOptions,
-    cart: state.items,
-    lastResponse: state.lastResponse,
-  });
 
-  let itemHint = result.itemHint;
-  if (!itemHint && result.url) {
-    const segments = result.url.split("/").filter(Boolean);
-    const guess =
-      segments[segments.length - 2] ?? segments[segments.length - 1];
-    itemHint = guess?.replace(/[-_]/g, " ") ?? null;
+  const pendingOptionsText = state.pendingOptions?.length
+    ? state.pendingOptions
+        .map(
+          (p: any, i: number) =>
+            `${i}. ${p.brand ?? ""} ${p.name} — $${(p.price_cents / 100).toFixed(2)}`,
+        )
+        .join("\n")
+    : "none";
+
+  const cartText = state.items?.length
+    ? state.items
+        .map((i: any) => `${i.name} × ${i.quantity} (added by ${i.addedBy})`)
+        .join("\n")
+    : "empty";
+
+  try {
+    const result = await chain.invoke({
+      message: state.message,
+      status: state.status ?? "collecting",
+      pendingOptions: pendingOptionsText,
+      cart: cartText,
+      lastResponse: state.lastResponse || "none",
+    });
+
+    let itemHint = result.itemHint;
+    if (!itemHint && result.url) {
+      const segments = result.url.split("/").filter(Boolean);
+      const guess =
+        segments[segments.length - 2] ?? segments[segments.length - 1];
+      itemHint = guess?.replace(/[-_]/g, " ") ?? null;
+    }
+
+    const returnedState = {
+      intent: result.intent,
+      url: result.url,
+      itemHint,
+      conversationHistory: [
+        new HumanMessage(`${state.senderId}: ${state.message}`),
+      ],
+    };
+    console.log("classification:", returnedState);
+
+    return returnedState;
+  } catch (err) {
+    console.error("Classification failed, falling back to 'other':", err);
+    return { intent: "other", url: null, itemHint: null };
   }
-
-  const returnedState = { intent: result.intent, url: result.url, itemHint };
-  console.log("state here", returnedState);
-
-  return returnedState;
 }
 
 const greetingPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    `You're a friendly household grocery-ordering assistant. The user just sent a greeting or casual message (not an order-related request). Respond warmly in one or two short, casual sentences. If they mentioned their name, acknowledge it naturally. Then briefly mention you can help them add items to the shared cart, view the cart, place the order, or split expenses — without sounding like a rigid menu of commands.`,
+    `You're a friendly household grocery-ordering assistant. Respond warmly in one or two short sentences.
+
+Recent conversation history:
+{history}
+
+If the history shows the user told you their name or other details, use them naturally. If asked about something not shown in the history, honestly say you don't have that — never guess.`,
   ],
   ["human", "{message}"],
 ]);
@@ -63,7 +97,17 @@ const greetingPrompt = ChatPromptTemplate.fromMessages([
 const greetingChain = greetingPrompt.pipe(llm).pipe(new StringOutputParser());
 
 export async function greetingNode(state: State): Promise<Partial<State>> {
-  const lastResponse = await greetingChain.invoke({ message: state.message });
+  const historyText = state.conversationHistory?.length
+    ? state.conversationHistory
+        .slice(-10)
+        .map((m) => `${m._getType()}: ${m.content}`)
+        .join("\n")
+    : "none yet";
+
+  const lastResponse = await greetingChain.invoke({
+    message: state.message,
+    history: historyText,
+  });
   return { lastResponse };
 }
 
@@ -600,12 +644,41 @@ export function cancelConfirmationNode(state: State): Partial<State> {
 //   return { status: "expensing", lastResponse: `Expense split:\n${summary}` };
 // }
 
-export function otherNode(state: State): Partial<State> {
-  return {
-    lastResponse: `Sorry, I didn't understand that as an order-related request.`,
-  };
-}
+const otherPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `You're Nomi, a friendly AI assistant for a shared household's grocery ordering.
 
+The user just sent a message that doesn't match a specific cart action (add/remove/view/confirm/expense).
+
+Recent conversation history:
+{history}
+
+Scope: you can discuss groceries, recipes and what ingredients they'd need to buy, meal planning, shared household logistics, and casual greetings/small talk. If the user asks about something clearly unrelated (e.g. travel planning, general trivia, coding help), politely say that's outside what you help with and steer back to groceries — don't actually answer it.
+
+Use the conversation history for continuity (e.g. remembering their name or something they said earlier).
+
+Keep responses to 1-3 short paragraphs. Don't mention intents, nodes, or classification internals.`,
+  ],
+  ["human", "{message}"],
+]);
+
+const otherChain = otherPrompt.pipe(llm).pipe(new StringOutputParser());
+
+export async function otherNode(state: State): Promise<Partial<State>> {
+  const historyText = state.conversationHistory?.length
+    ? state.conversationHistory
+        .slice(-10)
+        .map((m) => `${m._getType()}: ${m.content}`)
+        .join("\n")
+    : "none yet";
+
+  const lastResponse = await otherChain.invoke({
+    message: state.message,
+    history: historyText,
+  });
+  return { lastResponse };
+}
 export function alreadyPlacedNode(state: State): Partial<State> {
   return {
     lastResponse: `That order's already placed. Want to start a new order?`,
