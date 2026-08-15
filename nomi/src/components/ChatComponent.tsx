@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Stack,
   ScrollArea,
@@ -22,6 +22,7 @@ import { RobotIcon } from "@phosphor-icons/react";
 export const ChatComponent = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
+  const viewportRef = useRef<HTMLDivElement>(null);
 
   const searchParams = useSearchParams();
 
@@ -74,6 +75,16 @@ export const ChatComponent = () => {
       console.error("Failed to fetch messages:", error);
     }
   };
+  useEffect(() => {
+    const viewport = viewportRef.current;
+
+    if (!viewport) return;
+
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: "auto",
+    });
+  }, [messages]);
 
   useEffect(() => {
     fetchMessages();
@@ -140,7 +151,7 @@ export const ChatComponent = () => {
 
   return (
     <Stack h="100vh" gap={0} bg="white">
-      <ScrollArea flex={1} p="md" type="auto">
+      <ScrollArea flex={1} p="md" type="auto" viewportRef={viewportRef}>
         <Stack gap="md" maw={1000} mx="auto">
           {messages.map((message) => {
             const isAssistant = message.role === "assistant";

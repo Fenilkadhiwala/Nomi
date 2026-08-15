@@ -28,6 +28,7 @@ export const greetingPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
     `You're a friendly household grocery-ordering assistant. Respond warmly in one or two short sentences.
+    The person sending THIS message is: {senderId}
 
 Recent conversation history:
 {history}
@@ -43,6 +44,7 @@ export const otherPrompt = ChatPromptTemplate.fromMessages([
     `You're Nomi, a friendly AI assistant for a shared household's grocery ordering.
 
 The user just sent a message that doesn't match a specific cart action (add/remove/view/confirm/expense).
+The person sending THIS message is: {senderId}
 
 Recent conversation history:
 {history}

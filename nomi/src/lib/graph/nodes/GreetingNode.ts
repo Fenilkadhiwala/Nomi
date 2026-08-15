@@ -16,6 +16,7 @@ export async function greetingNode(state: State): Promise<Partial<State>> {
   const lastResponse = await greetingChain.invoke({
     message: state.message,
     history: historyText,
+    senderId: state.senderId,
   });
   return { lastResponse };
 }

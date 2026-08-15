@@ -16,6 +16,7 @@ export async function otherNode(state: State): Promise<Partial<State>> {
   const lastResponse = await otherChain.invoke({
     message: state.message,
     history: historyText,
+    senderId: state.senderId,
   });
   return { lastResponse };
 }
