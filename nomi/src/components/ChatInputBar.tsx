@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Paper, TextInput } from "@mantine/core";
+import { ActionIcon, Box, Paper, Textarea } from "@mantine/core";
 import { IconPlus, IconSend } from "@tabler/icons-react";
 import { useState } from "react";
 
@@ -21,16 +21,20 @@ export const ChatInputBar = ({ onSend }: Props) => {
   return (
     <Box p="md">
       <Paper withBorder radius="xl" shadow="sm" p="xs" maw={900} mx="auto">
-        <TextInput
+        <Textarea
           variant="unstyled"
           placeholder="Message..."
           value={message}
           onChange={(e) => setMessage(e.currentTarget.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
               handleSend();
             }
           }}
+          autosize
+          minRows={1}
+          maxRows={6}
           leftSection={
             <ActionIcon variant="subtle" radius="xl">
               <IconPlus size={18} />
