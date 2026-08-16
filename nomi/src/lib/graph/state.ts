@@ -48,6 +48,11 @@ export const GraphState = Annotation.Root({
     reducer: (current, update) => (current ?? []).concat(update ?? []),
     default: () => [],
   }),
+
+  approvals: Annotation<Record<string, boolean>>({
+    reducer: (current, update) => ({ ...(current ?? {}), ...(update ?? {}) }),
+    default: () => ({}),
+  }),
 });
 
 export type State = typeof GraphState.State;

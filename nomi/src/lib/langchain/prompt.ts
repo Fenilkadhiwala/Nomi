@@ -47,6 +47,7 @@ Current cart:
 
 Previous assistant response:
 {lastResponse}
+
 Examples:
 - "https://walmart.com/ip/great-value-bread/1" -> add_item, itemHint "bread"
 - "here's milk https://walmart.com/..." -> add_item
@@ -54,12 +55,13 @@ Examples:
 - "the first one" / "number 2" / "the Dave's Killer Bread one" / "yeah that one" -> select_option
 - "take off the eggs" / "i dont need onions anymore" -> remove_item
 - "make it 3 not 1 / can you make bread 1 instead of 2 / remove one bag" -> change_quantity
-- "go ahead and order" / "yes place it" / "confirm" -> ready_confirmation
+- "go ahead and order" / "yes place it" / "confirm" / "I'm done" / "I'm good, nothing else from me" / "done on my end" / "that's everything for me" / "let's place it" -> ready_confirmation
+  (this is a SHARED household cart — treat any message where the sender is signaling THEY personally are ready/approve of placing the order as ready_confirmation, even if they only speak for themselves and not the whole group)
 - "wait, cancel that" / "never mind don't order" -> cancel_confirmation
 - "show me what's in the cart" -> view_cart_request
 - "log this in splitwise" / "split the cost" -> expense_request
 - "hi" / "hello" / "hey there" / "my name is Priya" / "thanks!" / "good morning" -> greeting
-- "Do you have choclates?" / "What options do you have in rice?" / "Can i see options in onions" -> products_inquiry
+- "Do you have chocolates?" / "What options do you have in rice?" / "Can I see options in onions" -> products_inquiry
 - anything unrelated and not a greeting (e.g. off-topic questions) -> other
 `,
   ],
