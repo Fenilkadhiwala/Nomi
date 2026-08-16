@@ -1,8 +1,8 @@
-import { classifierPrompt } from "../../langchain/prompt";
 import { llm } from "../../langchain/chat";
 import { State } from "../state";
 import { HumanMessage } from "@langchain/core/messages";
 import { messageClassificationSchema } from "../schemas";
+import { classifierPrompt } from "../prompts";
 
 const structuredLlm = llm.withStructuredOutput(messageClassificationSchema, {
   name: "classify_message",

@@ -29,7 +29,7 @@ export const ChatComponent = () => {
   const SENDER_ID = searchParams.get("user") ?? "alice";
 
   // TODO: Replace this with your actual dynamic thread ID
-  const THREAD_ID = "74_hopkins_ave_at_6";
+  const THREAD_ID = "74_hopkins_ave_at_8";
 
   const getInitials = (name?: string) => {
     if (!name) return "?";
@@ -153,100 +153,107 @@ export const ChatComponent = () => {
     <Stack h="100vh" gap={0} bg="white">
       <ScrollArea flex={1} p="md" type="auto" viewportRef={viewportRef}>
         <Stack gap="md" maw={1000} mx="auto">
-          {messages.map((message) => {
-            const isAssistant = message.role === "assistant";
+          {messages
+            .filter(
+              (message) =>
+                message.role !== "assistant" || message.content?.trim(),
+            )
+            .map((message) => {
+              const isAssistant = message.role === "assistant";
 
-            const isMine = !isAssistant && message.sender_id === SENDER_ID;
+              const isMine = !isAssistant && message.sender_id === SENDER_ID;
 
-            const senderName = getSenderName(message);
+              const senderName = getSenderName(message);
 
-            const timestamp = getTimestamp(message);
+              const timestamp = getTimestamp(message);
 
-            return (
-              <Group
-                key={message.id}
-                align="flex-end"
-                justify={isMine ? "flex-end" : "flex-start"}
-                wrap="nowrap"
-                gap="xs"
-              >
-                {!isMine && (
-                  <Avatar
-                    size={36}
-                    radius="xl"
-                    color={isAssistant ? "violet" : "blue"}
-                  >
-                    {isAssistant ? (
-                      <RobotIcon size={20} weight="fill" />
-                    ) : (
-                      getInitials(senderName)
-                    )}
-                  </Avatar>
-                )}
-
-                <Stack
-                  gap={3}
-                  maw="70%"
-                  align={isMine ? "flex-end" : "flex-start"}
+              return (
+                <Group
+                  key={message.id}
+                  align="flex-end"
+                  justify={isMine ? "flex-end" : "flex-start"}
+                  wrap="nowrap"
+                  gap="xs"
                 >
-                  <Text
-                    size="xs"
-                    fw={600}
-                    c={isAssistant ? "violet.7" : "dimmed"}
-                    px={6}
-                    className="capitalize"
-                  >
-                    {isMine ? "You" : senderName}
-                  </Text>
+                  {!isMine && (
+                    <Avatar
+                      size={36}
+                      radius="xl"
+                      color={isAssistant ? "violet" : "blue"}
+                    >
+                      {isAssistant ? (
+                        <RobotIcon size={20} weight="fill" />
+                      ) : (
+                        getInitials(senderName)
+                      )}
+                    </Avatar>
+                  )}
 
-                  <Paper
-                    px="md"
-                    py="sm"
-                    radius="lg"
-                    bg={isMine ? "blue.6" : isAssistant ? "violet.0" : "gray.1"}
-                    c={isMine ? "white" : "dark"}
-                    withBorder={isAssistant}
-                    style={{
-                      borderColor: isAssistant
-                        ? "var(--mantine-color-violet-2)"
-                        : undefined,
-
-                      overflowWrap: "anywhere",
-                    }}
+                  <Stack
+                    gap={3}
+                    maw="70%"
+                    align={isMine ? "flex-end" : "flex-start"}
                   >
-                    {isAssistant ? (
-                      <Box className="markdown-body">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    <Text
+                      size="xs"
+                      fw={600}
+                      c={isAssistant ? "violet.7" : "dimmed"}
+                      px={6}
+                      className="capitalize"
+                    >
+                      {isMine ? "You" : senderName}
+                    </Text>
+
+                    <Paper
+                      px="md"
+                      py="sm"
+                      radius="lg"
+                      bg={
+                        isMine ? "blue.6" : isAssistant ? "violet.0" : "gray.1"
+                      }
+                      c={isMine ? "white" : "dark"}
+                      withBorder={isAssistant}
+                      style={{
+                        borderColor: isAssistant
+                          ? "var(--mantine-color-violet-2)"
+                          : undefined,
+
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {isAssistant ? (
+                        <Box className="markdown-body">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {message.content}
+                          </ReactMarkdown>
+                        </Box>
+                      ) : (
+                        <Text
+                          size="sm"
+                          style={{
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
                           {message.content}
-                        </ReactMarkdown>
-                      </Box>
-                    ) : (
-                      <Text
-                        size="sm"
-                        style={{
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {message.content}
+                        </Text>
+                      )}
+                    </Paper>
+
+                    {timestamp && (
+                      <Text size="10px" c="dimmed" px={6}>
+                        {timestamp}
                       </Text>
                     )}
-                  </Paper>
+                  </Stack>
 
-                  {timestamp && (
-                    <Text size="10px" c="dimmed" px={6}>
-                      {timestamp}
-                    </Text>
+                  {isMine && (
+                    <Avatar size={36} radius="xl" color="blue">
+                      {getInitials(SENDER_ID)}
+                    </Avatar>
                   )}
-                </Stack>
-
-                {isMine && (
-                  <Avatar size={36} radius="xl" color="blue">
-                    {getInitials(SENDER_ID)}
-                  </Avatar>
-                )}
-              </Group>
-            );
-          })}
+                </Group>
+              );
+            })}
 
           {loading && (
             <Group align="flex-end" gap="xs" wrap="nowrap">

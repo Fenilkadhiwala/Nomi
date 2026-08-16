@@ -30,18 +30,20 @@ export async function getChatResponse(
     conversationHistory: [new AIMessage(result.lastResponse)],
   });
 
-  const aiInsert = await pool.query(
-    `INSERT INTO messages (thread_id, sender_id, role, content) VALUES ($1, 'assistant', 'assistant', $2) RETURNING id, created_at`,
-    [threadId, result.lastResponse],
-  );
+  if (result?.lastResponse?.trim()) {
+    const aiInsert = await pool.query(
+      `INSERT INTO messages (thread_id, sender_id, role, content) VALUES ($1, 'assistant', 'assistant', $2) RETURNING id, created_at`,
+      [threadId, result.lastResponse],
+    );
 
-  await pusherServer.trigger(`household-${threadId}`, "new-message", {
-    id: aiInsert.rows[0].id,
-    senderId: "assistant",
-    role: "assistant",
-    content: result.lastResponse,
-    createdAt: aiInsert.rows[0].created_at,
-  });
+    await pusherServer.trigger(`household-${threadId}`, "new-message", {
+      id: aiInsert.rows[0].id,
+      senderId: "assistant",
+      role: "assistant",
+      content: result.lastResponse,
+      createdAt: aiInsert.rows[0].created_at,
+    });
+  }
   return {
     response: result.lastResponse,
     status: result.status,

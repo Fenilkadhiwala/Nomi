@@ -1,5 +1,9 @@
 import z from "zod";
 
+export const targetClassificationSchema = z.object({
+  target: z.enum(["agent", "household"]),
+});
+
 export const messageClassificationSchema = z.object({
   intent: z.enum([
     "add_item",

@@ -16,8 +16,10 @@ import { greetingNode } from "./nodes/GreetingNode";
 import { productsInquiryNode } from "./nodes/ProductsInquiryNode";
 import { otherNode } from "./nodes/OtherCategoryNode";
 import { alreadyPlacedNode } from "./nodes/AlreadyPlacedOrderNode";
+import { targetClassifierNode } from "./nodes/TargetClassifierNode";
 
 export const builder = new StateGraph(GraphState)
+  .addNode("target_classification", targetClassifierNode)
   .addNode("classify", classifyNode)
   .addNode("give_possible_options", givePossibleOptions)
   .addNode("resolve_selection", resolveSelectionNode)
@@ -31,7 +33,10 @@ export const builder = new StateGraph(GraphState)
   .addNode("products_inquiry", productsInquiryNode)
   .addNode("other", otherNode)
   .addNode("already_placed", alreadyPlacedNode)
-  .addEdge(START, "classify")
+  .addEdge(START, "target_classification")
+  .addConditionalEdges("target_classification", (state: State) => {
+    return state?.target === "agent" ? "classify" : END;
+  })
   .addConditionalEdges("classify", (state: State) => {
     return getIntent(state);
   })
