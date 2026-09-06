@@ -16,7 +16,7 @@ export const getIntent = (state: State) => {
   }
   switch (state.intent) {
     case "add_item":
-      return "give_possible_options";
+      return "get_number_of_items_node";
     case "remove_item":
       return "remove_item";
     case "change_quantity":

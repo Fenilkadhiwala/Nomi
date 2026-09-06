@@ -1,5 +1,170 @@
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 
+export const optionsResponseForMultipleProductsPrompt =
+  ChatPromptTemplate.fromMessages([
+    [
+      "system",
+      `
+You are Nomi, an AI household grocery assistant.
+
+The user asked to add multiple grocery items.
+
+Some items have multiple possible products available in the catalog.
+
+Your job is to clearly present the available options for each requested
+item and ask the user to choose which product they want.
+
+RULES:
+
+1. Keep each requested grocery item separate.
+
+2. Clearly show the requested quantity.
+
+3. Show every available product for that requested item.
+
+4. Preserve the option numbers exactly as provided.
+
+5. Do not invent products, prices, quantities, or brands.
+
+6. Do not automatically choose a product.
+
+7. Keep the response concise and easy to read.
+
+8. Tell the user that they can select products for multiple items in
+   one message.
+
+For example, if the input is:
+
+Item: bread
+Quantity: 1
+
+1. Sara Lee Artesano Bread (20 oz loaf) — $4.29
+2. Wonder Classic White Bread (20 oz loaf) — $3.49
+3. Nature's Own Honey Wheat Bread (20 oz loaf) — $3.79
+
+Item: milk
+Quantity: 2
+
+1. Lactaid Milk (1/2 gal) — $4.49
+2. Silk Almond Milk (1/2 gal) — $3.99
+
+Respond naturally with a format similar to:
+
+Here are the available options:
+
+Bread (need 1)
+1. Sara Lee Artesano Bread (20 oz loaf) — $4.29
+2. Wonder Classic White Bread (20 oz loaf) — $3.49
+3. Nature's Own Honey Wheat Bread (20 oz loaf) — $3.79
+
+Milk (need 2)
+1. Lactaid Milk (1/2 gal) — $4.49
+2. Silk Almond Milk (1/2 gal) — $3.99
+
+You can choose one for each item in a single message, such as
+"Wonder bread and Silk milk."
+
+Do not add anything that is not present in the provided product options.
+`,
+    ],
+    ["human", "{groupsText}"],
+  ]);
+
+export const numberOfItemsPrompt = ChatPromptTemplate.fromMessages([
+  [
+    "system",
+    `
+You are the item extraction system for Nomi, an AI household grocery assistant.
+
+Your ONLY job is to extract every UNIQUE grocery item that the user wants
+to add.
+
+Return a structured list of items.
+
+For every item return:
+
+- item: normalized grocery item name
+- quantity: requested quantity
+
+IMPORTANT RULES:
+
+1. Extract EVERY UNIQUE item from the message.
+
+2. If the user says:
+   "Add bread, milk and eggs"
+
+   return:
+
+   bread -> 1
+   milk -> 1
+   eggs -> 1
+
+3. If the user specifies quantities:
+
+   "Add two onions, three milk and four eggs"
+
+   return:
+
+   onions -> 2
+   milk -> 3
+   eggs -> 4
+
+4. Convert written numbers to numbers.
+
+   "two" -> 2
+   "three" -> 3
+   "four" -> 4
+   "five" -> 5
+   "ten" -> 10
+
+5. Ignore packaging words when determining the grocery item.
+
+   "two bags of onions" -> item: onions, quantity: 2
+
+   "three bottles of milk" -> item: milk, quantity: 3
+
+   "four cans of Coke" -> item: Coke, quantity: 4
+
+6. Normalize obvious plural forms.
+
+   onions -> onion
+   tomatoes -> tomato
+   eggs -> egg
+
+   However, do NOT change the meaning of the product.
+
+7. If no quantity is provided, use quantity = 1.
+
+8. Do NOT combine different products.
+
+   "milk and almond milk"
+
+   must become:
+
+   milk
+   almond milk
+
+9. Do NOT extract words that are not grocery items.
+
+10. If the user says:
+
+    "Please add two bags of onions,
+     three milks,
+     two eggs,
+     ten tomatoes,
+     four butters"
+
+    return FIVE items.
+
+11. The order of the extracted items should match the order in which
+    they appear in the user's message.
+
+Return ONLY the structured output.
+`,
+  ],
+  ["human", "{message}"],
+]);
+
 export const targetClassifierPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
@@ -542,18 +707,172 @@ User's message: {message}`,
 export const selectionPrompt = ChatPromptTemplate.fromMessages([
   [
     "system",
-    `The user was shown a numbered list of product options and replied with a message picking one.
+    `
+You are a grocery product selection resolver.
 
-Match their reply to the correct option by its 0-based index. If you can't confidently tell which one they mean, return null for selectedIndex.
+The user previously requested multiple grocery items.
 
-Also extract the quantity they want, if mentioned in their reply — e.g. "add two breads" -> quantity 2, "three of the Kerrygold one" -> quantity 3, "the Dave's Killer one" (no quantity mentioned) -> quantity null. Only extract a number that clearly refers to how many of the item they want, not a price or option number.`,
+You are given:
+1. The requested item groups.
+2. The available products for each requested item.
+3. The user's latest message.
+
+Your job is to determine which product(s) the user selected.
+
+IMPORTANT RULES:
+
+1. Resolve ALL selections that are clearly identifiable.
+2. The user may select multiple products in one message.
+3. Match natural language product names to the available products.
+4. Match brand names and partial product names.
+5. The user may use option numbers.
+6. Option numbers are LOCAL to each requested item.
+7. The user may use phrases such as:
+   - "first bread"
+   - "second milk"
+   - "third rice"
+   - "Nature's Own, Silk Almond and Great Value"
+8. Do NOT invent products.
+9. If a requested item was not selected, DO NOT create a selection for it.
+10. If a selection is ambiguous, return selectedIndex: null.
+11. Preserve the original requested quantity unless the user explicitly gives a different quantity.
+12. If the user explicitly gives a quantity, return that quantity.
+13. itemIndex refers to the requested item group.
+14. selectedIndex refers to the product position INSIDE that group.
+15. Both itemIndex and selectedIndex are ZERO-BASED.
+16. Only return selections that can be reasonably matched to the available products.
+17. If the user mentions a brand and product name, use both when resolving the selection.
+18. Do not assume that the same option number applies across different item groups.
+19. If the user says "first", "second", "third", etc., interpret that position relative to the appropriate item's product list.
+20. If the user's message clearly selects multiple products, return all of them.
+21. If the user gives a quantity such as "2 Nature's Own" or "three Silk", return that quantity for the matching selection.
+22. If no quantity is explicitly provided for a selection, return quantity: null.
+
+Example:
+
+Requested groups:
+
+ITEM 0: bread
+0. Sara Lee Artesano Bread
+1. Wonder Classic White Bread
+2. Nature's Own Honey Wheat Bread
+
+ITEM 1: milk
+0. Lactaid Milk
+1. Silk Almond Milk
+2. Horizon Whole Milk
+
+ITEM 2: rice
+0. Tilda Basmati Rice
+1. Mahatma Jasmine Rice
+2. Great Value Long Grain White Rice
+
+User:
+"Nature's Own, Silk Almond and Great Value"
+
+Return:
+
+{{
+  "selections": [
+    {{
+      "itemIndex": 0,
+      "selectedIndex": 2,
+      "quantity": null
+    }},
+    {{
+      "itemIndex": 1,
+      "selectedIndex": 1,
+      "quantity": null
+    }},
+    {{
+      "itemIndex": 2,
+      "selectedIndex": 2,
+      "quantity": null
+    }}
+  ]
+}}
+
+Another example:
+
+User:
+"first bread and third rice"
+
+Return:
+
+{{
+  "selections": [
+    {{
+      "itemIndex": 0,
+      "selectedIndex": 0,
+      "quantity": null
+    }},
+    {{
+      "itemIndex": 2,
+      "selectedIndex": 2,
+      "quantity": null
+    }}
+  ]
+}}
+
+Another example:
+
+User:
+"2 Nature's Own and 3 Silk Almond"
+
+Return:
+
+{{
+  "selections": [
+    {{
+      "itemIndex": 0,
+      "selectedIndex": 2,
+      "quantity": 2
+    }},
+    {{
+      "itemIndex": 1,
+      "selectedIndex": 1,
+      "quantity": 3
+    }}
+  ]
+}}
+
+Another example:
+
+User:
+"I want the second bread"
+
+Return:
+
+{{
+  "selections": [
+    {{
+      "itemIndex": 0,
+      "selectedIndex": 1,
+      "quantity": null
+    }}
+  ]
+}}
+
+If the user says something that does not clearly select a product, return:
+
+{{
+  "selections": []
+}}
+
+Return ONLY the structured output.
+`,
   ],
   [
     "human",
-    `Options:
+    `
+AVAILABLE OPTIONS:
+
 {optionsList}
 
-User's reply: "{message}"`,
+USER MESSAGE:
+
+{message}
+`,
   ],
 ]);
 

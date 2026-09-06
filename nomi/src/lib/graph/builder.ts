@@ -17,10 +17,12 @@ import { productsInquiryNode } from "./nodes/ProductsInquiryNode";
 import { otherNode } from "./nodes/OtherCategoryNode";
 import { alreadyPlacedNode } from "./nodes/AlreadyPlacedOrderNode";
 import { targetClassifierNode } from "./nodes/TargetClassifierNode";
+import { getNumberOfItemsNode } from "./nodes/GetNumberOfItemsNode";
 
 export const builder = new StateGraph(GraphState)
   .addNode("target_classification", targetClassifierNode)
   .addNode("classify", classifyNode)
+  .addNode("get_number_of_items_node", getNumberOfItemsNode)
   .addNode("give_possible_options", givePossibleOptions)
   .addNode("resolve_selection", resolveSelectionNode)
   .addNode("remove_item", removeItemNode)
@@ -40,6 +42,7 @@ export const builder = new StateGraph(GraphState)
   .addConditionalEdges("classify", (state: State) => {
     return getIntent(state);
   })
+  .addEdge("get_number_of_items_node", "give_possible_options")
   .addEdge("give_possible_options", END)
   .addEdge("resolve_selection", END)
   .addEdge("remove_item", END)

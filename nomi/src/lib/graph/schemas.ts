@@ -4,6 +4,29 @@ export const targetClassificationSchema = z.object({
   target: z.enum(["agent", "household"]),
 });
 
+export const numberOfItemsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        item: z
+          .string()
+          .min(1)
+          .describe("The grocery item the user wants to add."),
+
+        quantity: z
+          .number()
+          .int()
+          .positive()
+          .nullable()
+          .describe(
+            "The quantity requested for this item. Use 1 if no quantity was explicitly mentioned.",
+          ),
+      }),
+    )
+    .min(1)
+    .describe("Every unique grocery item requested by the user."),
+});
+
 export const messageClassificationSchema = z.object({
   intent: z.enum([
     "add_item",
@@ -55,20 +78,35 @@ export const removeItemSchema = z.object({
 });
 
 export const selectionSchema = z.object({
-  selectedIndex: z
-    .number()
-    .nullable()
-    .describe(
-      "0-based index of the option the user is referring to, or null if none match clearly",
-    ),
-  quantity: z
-    .number()
-    .int()
-    .positive()
-    .nullable()
-    .describe(
-      "The quantity the user wants, if mentioned (e.g. 'two breads' -> 2). Null if not mentioned — default to 1 in that case.",
-    ),
+  selections: z.array(
+    z.object({
+      itemIndex: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe(
+          "0-based index of the requested item group. Example: bread=0, milk=1, rice=2.",
+        ),
+
+      selectedIndex: z
+        .number()
+        .int()
+        .nonnegative()
+        .nullable()
+        .describe(
+          "0-based index of the selected product inside that item's product list. Null if no clear selection was made.",
+        ),
+
+      quantity: z
+        .number()
+        .int()
+        .positive()
+        .nullable()
+        .describe(
+          "Quantity explicitly requested by the user for this selected item. Null means preserve the original requested quantity.",
+        ),
+    }),
+  ),
 });
 
 export const changeQuantitySchema = z.object({
