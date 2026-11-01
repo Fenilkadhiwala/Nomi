@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "grocery:mcp": "tsx src/mcp/grocery/index.ts",
+    "grocery:mcp:test": "tsx src/mcp/grocery/test-client.ts",
+    "grocery:agent:test": "tsx src/agents/grocery/test-agent.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1092.0",
@@ -21,6 +24,8 @@
     "@mantine/form": "^9.4.2",
     "@mantine/hooks": "^9.4.2",
     "@mantine/notifications": "^9.4.2",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@phosphor-icons/react": "^2.1.10",
     "@tabler/icons-react": "^3.45.0",
     "axios": "^1.18.1",
@@ -34,7 +39,7 @@
     "react-markdown": "^10.1.0",
     "recharts": "^3.10.0",
     "remark-gfm": "^4.0.1",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -18,40 +18,43 @@ import { otherNode } from "./nodes/OtherCategoryNode";
 import { alreadyPlacedNode } from "./nodes/AlreadyPlacedOrderNode";
 import { targetClassifierNode } from "./nodes/TargetClassifierNode";
 import { getNumberOfItemsNode } from "./nodes/GetNumberOfItemsNode";
+import { supervisorNode } from "./nodes/SupervisorNode";
 
 export const builder = new StateGraph(GraphState)
-  .addNode("target_classification", targetClassifierNode)
-  .addNode("classify", classifyNode)
-  .addNode("get_number_of_items_node", getNumberOfItemsNode)
-  .addNode("give_possible_options", givePossibleOptions)
-  .addNode("resolve_selection", resolveSelectionNode)
-  .addNode("remove_item", removeItemNode)
-  .addNode("change_quantity", changeQuantityNode)
-  .addNode("view_cart", viewCartNode)
-  .addNode("ready_confirmation", readyConfirmationNode)
-  .addNode("cancel_confirmation", cancelConfirmationNode)
-  .addNode("expense", expenseNode)
-  .addNode("greeting", greetingNode)
-  .addNode("products_inquiry", productsInquiryNode)
-  .addNode("other", otherNode)
-  .addNode("already_placed", alreadyPlacedNode)
-  .addEdge(START, "target_classification")
-  .addConditionalEdges("target_classification", (state: State) => {
-    return state?.target === "agent" ? "classify" : END;
-  })
-  .addConditionalEdges("classify", (state: State) => {
-    return getIntent(state);
-  })
-  .addEdge("get_number_of_items_node", "give_possible_options")
-  .addEdge("give_possible_options", END)
-  .addEdge("resolve_selection", END)
-  .addEdge("remove_item", END)
-  .addEdge("change_quantity", END)
-  .addEdge("view_cart", END)
-  .addEdge("ready_confirmation", END)
-  .addEdge("cancel_confirmation", END)
-  .addEdge("expense", END)
-  .addEdge("greeting", END)
-  .addEdge("products_inquiry", END)
-  .addEdge("other", END)
-  .addEdge("already_placed", END);
+  .addNode("supervisor", supervisorNode)
+  // .addNode("target_classification", targetClassifierNode)
+  // .addNode("classify", classifyNode)
+  // .addNode("get_number_of_items_node", getNumberOfItemsNode)
+  // .addNode("give_possible_options", givePossibleOptions)
+  // .addNode("resolve_selection", resolveSelectionNode)
+  // .addNode("remove_item", removeItemNode)
+  // .addNode("change_quantity", changeQuantityNode)
+  // .addNode("view_cart", viewCartNode)
+  // .addNode("ready_confirmation", readyConfirmationNode)
+  // .addNode("cancel_confirmation", cancelConfirmationNode)
+  // .addNode("expense", expenseNode)
+  // .addNode("greeting", greetingNode)
+  // .addNode("products_inquiry", productsInquiryNode)
+  // .addNode("other", otherNode)
+  // .addNode("already_placed", alreadyPlacedNode)
+  .addEdge(START, "supervisor")
+  // .addConditionalEdges("target_classification", (state: State) => {
+  //   return state?.target === "agent" ? "classify" : END;
+  // })
+  // .addConditionalEdges("classify", (state: State) => {
+  //   return getIntent(state);
+  // })
+  // .addEdge("get_number_of_items_node", "give_possible_options")
+  .addEdge("supervisor", END);
+// .addEdge("give_possible_options", END)
+// .addEdge("resolve_selection", END)
+// .addEdge("remove_item", END)
+// .addEdge("change_quantity", END)
+// .addEdge("view_cart", END)
+// .addEdge("ready_confirmation", END)
+// .addEdge("cancel_confirmation", END)
+// .addEdge("expense", END)
+// .addEdge("greeting", END)
+// .addEdge("products_inquiry", END)
+// .addEdge("other", END)
+// .addEdge("already_placed", END);
