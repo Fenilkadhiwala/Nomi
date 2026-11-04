@@ -9,6 +9,59 @@ export type CartItemRow = {
   created_at: Date;
   updated_at: Date;
 };
+
+export async function updateCartItemQuantity(
+  cartId: number,
+  cartItemId: number,
+  quantity: number,
+) {
+  const { rows } = await pool.query(
+    `
+      UPDATE cart_items
+      SET quantity = $3,
+          updated_at = NOW()
+      WHERE cart_id = $1
+        AND id = $2
+      RETURNING *
+    `,
+    [cartId, cartItemId, quantity],
+  );
+
+  return rows[0] ?? null;
+}
+export async function adjustCartItemQuantity(
+  cartId: number,
+  cartItemId: number,
+  quantityChange: number,
+) {
+  const { rows } = await pool.query(
+    `
+      UPDATE cart_items
+      SET quantity = quantity + $3,
+          updated_at = NOW()
+      WHERE cart_id = $1
+        AND id = $2
+        AND quantity + $3 > 0
+      RETURNING *
+    `,
+    [cartId, cartItemId, quantityChange],
+  );
+
+  return rows[0] ?? null;
+}
+export async function removeCartItem(cartId: number, cartItemId: number) {
+  const { rows } = await pool.query(
+    `
+      DELETE FROM cart_items
+      WHERE cart_id = $1
+        AND id = $2
+      RETURNING *
+    `,
+    [cartId, cartItemId],
+  );
+
+  return rows[0] ?? null;
+}
 export async function displayCartRepository(cartId: number) {
   const { rows } = await pool.query(
     `

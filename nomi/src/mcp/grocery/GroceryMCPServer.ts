@@ -2,11 +2,173 @@ import { McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 
 import { searchProducts } from "../../services/product.service";
-import { addToCart, displayCart } from "@/src/services/cart.service";
+import {
+  addToCart,
+  adjustCartQuantity,
+  displayCart,
+  removeFromCart,
+  updateCartQuantity,
+} from "@/src/services/cart.service";
 export const groceryMCPServer = new McpServer({
   name: "nomi-grocery",
   version: "1.0.0",
 });
+
+groceryMCPServer.registerTool(
+  "update_cart_quantity",
+  {
+    title: "Update Cart Quantity",
+    description:
+      "Set an existing grocery cart item's quantity to an exact number. Use this when the user asks to make an item a specific quantity, such as 'make eggs 3' or 'change milk quantity to 2'. This replaces the existing quantity.",
+    inputSchema: z.object({
+      cartItemId: z.number().int().positive(),
+      quantity: z.number().int().positive(),
+    }),
+    annotations: {
+      readOnlyHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async ({ cartItemId, quantity }) => {
+    try {
+      const householdId = 1;
+
+      const result = await updateCartQuantity(
+        householdId,
+        cartItemId,
+        quantity,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("update_cart_quantity failed:", error);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: "Failed to update cart item quantity",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+groceryMCPServer.registerTool(
+  "adjust_cart_quantity",
+  {
+    title: "Adjust Cart Quantity",
+    description:
+      "Increase or decrease the quantity of an existing grocery cart item by a specified amount. A positive quantityChange increases the quantity, while a negative quantityChange decreases it. For example, 'add 2 more eggs' means +2 and 'reduce butter by 1' means -1.",
+    inputSchema: z.object({
+      cartItemId: z.number().int().positive(),
+      quantityChange: z
+        .number()
+        .int()
+        .refine((value) => value !== 0, "Quantity change cannot be zero"),
+    }),
+    annotations: {
+      readOnlyHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  async ({ cartItemId, quantityChange }) => {
+    try {
+      // Replace this with trusted application context.
+      const householdId = 1;
+
+      const result = await adjustCartQuantity(
+        householdId,
+        cartItemId,
+        quantityChange,
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("adjust_cart_quantity failed:", error);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: "Failed to adjust cart item quantity",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+groceryMCPServer.registerTool(
+  "remove_from_cart",
+  {
+    title: "Remove Cart Item",
+    description:
+      "Remove an entire product entry from the active household grocery cart. Use this when the user explicitly asks to remove a product completely.",
+    inputSchema: z.object({
+      cartItemId: z.number().int().positive(),
+    }),
+    annotations: {
+      readOnlyHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  async ({ cartItemId }) => {
+    try {
+      // Replace this with trusted application context.
+      const householdId = 1;
+
+      const result = await removeFromCart(householdId, cartItemId);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("remove_from_cart failed:", error);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error: "Failed to remove item from cart",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
 
 groceryMCPServer.registerTool(
   "display_cart",

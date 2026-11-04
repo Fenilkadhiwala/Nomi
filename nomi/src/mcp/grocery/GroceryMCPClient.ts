@@ -21,8 +21,78 @@ export class GroceryMCPClient {
     await this.client.connect(this.transport);
   }
 
+  async updateCartQuantity(cartItemId: any, quantity: any) {
+    const result = await this.client.callTool({
+      name: "update_cart_quantity",
+      arguments: {
+        cartItemId,
+        quantity,
+      },
+    });
+
+    if (result.isError) {
+      throw new Error("update_cart_quantity failed");
+    }
+
+    const textContent = result.content.find(
+      (item: any) => item.type === "text",
+    );
+
+    if (!textContent || !("text" in textContent)) {
+      throw new Error("Invalid search_products response");
+    }
+
+    return JSON.parse(textContent.text);
+  }
+
+  async adjustCartQuantity(cartItemId: any, quantity: any) {
+    const result = await this.client.callTool({
+      name: "adjust_cart_quantity",
+      arguments: {
+        cartItemId,
+        quantity,
+      },
+    });
+
+    if (result.isError) {
+      throw new Error("adjust_cart_quantity failed");
+    }
+
+    const textContent = result.content.find(
+      (item: any) => item.type === "text",
+    );
+
+    if (!textContent || !("text" in textContent)) {
+      throw new Error("Invalid search_products response");
+    }
+
+    return JSON.parse(textContent.text);
+  }
+
+  async removeFromCart(cartItemId: any) {
+    const result = await this.client.callTool({
+      name: "remove_from_cart",
+      arguments: {
+        cartItemId,
+      },
+    });
+
+    if (result.isError) {
+      throw new Error("remove_from_cart failed");
+    }
+
+    const textContent = result.content.find(
+      (item: any) => item.type === "text",
+    );
+
+    if (!textContent || !("text" in textContent)) {
+      throw new Error("Invalid search_products response");
+    }
+
+    return JSON.parse(textContent.text);
+  }
+
   async searchProducts(itemHint: string) {
-    console.log("item hint in client", itemHint);
     const result = await this.client.callTool({
       name: "search_products",
       arguments: {

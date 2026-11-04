@@ -29,7 +29,7 @@ export const ChatComponent = () => {
   const SENDER_ID = searchParams.get("user") ?? "alice";
 
   // TODO: Replace this with your actual dynamic thread ID
-  const THREAD_ID = "t23";
+  const THREAD_ID = "t26";
 
   const getInitials = (name?: string) => {
     if (!name) return "?";
