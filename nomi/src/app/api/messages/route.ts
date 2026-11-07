@@ -7,6 +7,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing threadId" }, { status: 400 });
   }
 
+  console.log("thread id", threadId);
+
   const { rows } = await pool.query(
     `SELECT id, sender_id, role, content, created_at
      FROM messages

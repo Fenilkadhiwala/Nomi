@@ -8,6 +8,27 @@ export async function getChatResponse(
   senderId: string,
   threadId: string,
 ) {
+  const debug = await pool.query(`
+  SELECT
+    current_user,
+    session_user,
+    current_database(),
+    current_schema(),
+    inet_server_addr()::text AS server_address,
+    inet_server_port() AS server_port,
+    has_table_privilege(
+      current_user,
+      'public.messages',
+      'INSERT'
+    ) AS can_insert,
+    has_table_privilege(
+      current_user,
+      'public.messages',
+      'SELECT'
+    ) AS can_select
+`);
+
+  console.log("DATABASE DEBUG:", debug.rows[0]);
   const userInsert = await pool.query(
     `INSERT INTO messages (thread_id, sender_id, role, content) VALUES ($1, $2, 'user', $3) RETURNING id, created_at`,
     [threadId, senderId, message],

@@ -4,6 +4,7 @@ import "./globals.css";
 import "@mantine/core/styles.css";
 import { MantineProvider } from "@mantine/core";
 import { mantineHtmlProps } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,7 +33,15 @@ export default function RootLayout({
       {...mantineHtmlProps}
     >
       <body className="min-h-full flex flex-col">
-        <MantineProvider>{children}</MantineProvider>
+        <MantineProvider>
+          <Notifications
+            position="top-right"
+            limit={3}
+            autoClose={4500}
+            zIndex={10000}
+          />
+          {children}
+        </MantineProvider>
       </body>
     </html>
   );

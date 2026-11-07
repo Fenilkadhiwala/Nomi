@@ -18,6 +18,7 @@ import remarkGfm from "remark-gfm";
 import Pusher from "pusher-js";
 import { useSearchParams } from "next/navigation";
 import { RobotIcon } from "@phosphor-icons/react";
+import { threadId } from "worker_threads";
 
 export const ChatComponent = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -29,7 +30,7 @@ export const ChatComponent = () => {
   const SENDER_ID = searchParams.get("user") ?? "alice";
 
   // TODO: Replace this with your actual dynamic thread ID
-  const THREAD_ID = "t26";
+  const THREAD_ID = "t28";
 
   const getInitials = (name?: string) => {
     if (!name) return "?";
@@ -68,6 +69,7 @@ export const ChatComponent = () => {
 
   const fetchMessages = async () => {
     try {
+      console.log("here***********", threadId);
       const fetchedMessages = await getMessages(THREAD_ID);
 
       setMessages(fetchedMessages);
@@ -87,6 +89,7 @@ export const ChatComponent = () => {
   }, [messages]);
 
   useEffect(() => {
+    console.log("use effcet");
     fetchMessages();
   }, []);
 
