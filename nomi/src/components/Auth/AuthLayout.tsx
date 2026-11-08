@@ -10,7 +10,7 @@ import {
   Title,
   ThemeIcon,
 } from "@mantine/core";
-import { ChatCircleDotsIcon, SparkleIcon } from "@phosphor-icons/react";
+import { ChatCircleDotsIcon } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 
 interface AuthLayoutProps {
@@ -36,10 +36,6 @@ export function AuthLayout({ children }: AuthLayoutProps) {
           </Text>
 
           <Stack gap={28} maw={520}>
-            <ThemeIcon size={60} radius="xl" variant="light" color="gray">
-              <SparkleIcon size={30} weight="fill" color="white" />
-            </ThemeIcon>
-
             <Title
               order={1}
               fz={{ base: 40, lg: 48, xl: 60 }}

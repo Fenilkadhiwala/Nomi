@@ -2,6 +2,11 @@ import {
   AuthResponse,
   AuthUser,
   ChatMessage,
+  CreateGroupPayload,
+  CreateHouseholdPayload,
+  GroupMember,
+  Household,
+  HouseholdGroup,
   LoginPayload,
   RegisterPayload,
 } from "../types/types";
@@ -14,10 +19,28 @@ const api = axios.create({
   timeout: 15000,
 });
 
+export async function inviteGroupMember(
+  groupId: number,
+  email: string,
+  options: {
+    includeOtherGroups: boolean;
+    includeHomeCircle: boolean;
+  },
+): Promise<{ message: string }> {
+  const { data } = await api.post<{
+    message: string;
+  }>(`/groups/${groupId}/invitations`, {
+    email,
+    includeOtherGroups: options.includeOtherGroups,
+    includeHomeCircle: options.includeHomeCircle,
+  });
+
+  return data;
+}
+
 export const getAIResponseStream = async (
   message: string,
-  senderId: any,
-  threadId: any,
+  threadId: string,
 ) => {
   const response = await fetch("/api/get-ai-response", {
     method: "POST",
@@ -27,20 +50,20 @@ export const getAIResponseStream = async (
     credentials: "include",
     body: JSON.stringify({
       message,
-      senderId,
       threadId,
     }),
   });
 
+  const data = await response.json();
+
   if (!response.ok) {
-    throw new Error("Unable to get AI response.");
+    throw new Error(data.error || "Unable to get AI response.");
   }
 
-  return response.json();
+  return data;
 };
 
 export const getMessages = async (threadId: string): Promise<ChatMessage[]> => {
-  console.log("thread id", threadId);
   const { data } = await api.get<{
     messages: ChatMessage[];
   }>("/messages", {
@@ -86,6 +109,54 @@ export async function getLoggedInUser(): Promise<AuthUser | null> {
 
 export async function logoutUser(): Promise<void> {
   await api.post("/logout");
+}
+
+export async function createHousehold(
+  payload: CreateHouseholdPayload,
+): Promise<{
+  household: Pick<Household, "id" | "name" | "address">;
+  role: "owner";
+  message: string;
+}> {
+  const { data } = await api.post("/households", payload);
+
+  return data;
+}
+
+export async function getMyHouseholds(): Promise<Household[]> {
+  const { data } = await api.get<{
+    households: Household[];
+  }>("/households/mine");
+
+  return data.households;
+}
+
+export async function getMyGroups(): Promise<HouseholdGroup[]> {
+  const { data } = await api.get<{
+    groups: HouseholdGroup[];
+  }>("/groups");
+
+  return data.groups;
+}
+
+export async function createGroup(
+  payload: CreateGroupPayload,
+): Promise<HouseholdGroup> {
+  const { data } = await api.post<{
+    group: HouseholdGroup;
+    message: string;
+  }>("/groups", payload);
+
+  return data.group;
+}
+
+export async function getGroupMembers(groupId: number): Promise<GroupMember[]> {
+  const { data } = await api.get<{
+    group_id: number;
+    members: GroupMember[];
+  }>(`/groups/${groupId}/members`);
+
+  return data.members;
 }
 
 export default api;

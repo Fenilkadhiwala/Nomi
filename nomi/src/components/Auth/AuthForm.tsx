@@ -14,7 +14,7 @@ import {
 import { useForm } from "@mantine/form";
 import { ArrowRightIcon } from "@phosphor-icons/react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useRef, useState } from "react";
 
 import { loginUser, registerUser } from "@/src/apis/api";
@@ -56,13 +56,64 @@ const inputStyles = {
   },
 };
 
+/**
+ * Allow only internal application paths.
+ *
+ * Examples:
+ * /invite/abc123 -> allowed
+ * /dashboard -> allowed
+ * https://evil.com -> rejected
+ * //evil.com -> rejected
+ * /\\evil.com -> rejected
+ */
+function getSafeRedirectPath(value: string | null): string {
+  if (!value) {
+    return "/dashboard";
+  }
+
+  if (
+    !value.startsWith("/") ||
+    value.startsWith("//") ||
+    value.includes("\\") ||
+    /[\u0000-\u001F\u007F]/.test(value)
+  ) {
+    return "/dashboard";
+  }
+
+  // Invitation redirects are the only custom
+  // redirects needed for this workflow.
+  //
+  // This also prevents unexpected destinations
+  // such as /logout or another auth endpoint.
+  const pathname = value.split(/[?#]/, 1)[0];
+
+  if (/^\/invite\/[a-f0-9]{64}$/i.test(pathname)) {
+    return value;
+  }
+
+  return "/dashboard";
+}
+
 export function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [loading, setLoading] = useState(false);
   const submittingRef = useRef(false);
 
   const isRegister = mode === "register";
+
+  // Preserve invitation URL through authentication.
+  const redirectPath = getSafeRedirectPath(searchParams.get("next"));
+
+  const hasInvitationRedirect = redirectPath.startsWith("/invite/");
+
+  // Preserve redirect when switching auth modes.
+  const alternateAuthPath = isRegister ? "/login" : "/register";
+
+  const alternateAuthUrl = hasInvitationRedirect
+    ? `${alternateAuthPath}?next=${encodeURIComponent(redirectPath)}`
+    : alternateAuthPath;
 
   const form = useForm<FormValues>({
     mode: "uncontrolled",
@@ -128,7 +179,9 @@ export function AuthForm({ mode }: AuthFormProps) {
 
         notify.success({
           title: "Account created!",
-          message: "Welcome to Nomi. Your account is ready.",
+          message: hasInvitationRedirect
+            ? "Your account is ready. Continue to accept your invitation."
+            : "Welcome to Nomi. Your account is ready.",
         });
       } else {
         await loginUser({
@@ -138,11 +191,15 @@ export function AuthForm({ mode }: AuthFormProps) {
 
         notify.success({
           title: "Welcome back!",
-          message: "You've signed in successfully.",
+          message: hasInvitationRedirect
+            ? "You've signed in. Continue to your invitation."
+            : "You've signed in successfully.",
         });
       }
 
-      router.replace("/dashboard");
+      // Normal authentication -> /dashboard
+      // Invitation authentication -> /invite/[token]
+      router.replace(redirectPath);
       router.refresh();
     } catch (error: unknown) {
       const apiError = getApiError(error);
@@ -202,19 +259,38 @@ export function AuthForm({ mode }: AuthFormProps) {
         <Title
           order={1}
           c={TEXT}
-          fz={{ base: 32, sm: 38, lg: 42 }}
+          fz={{
+            base: 32,
+            sm: 38,
+            lg: 42,
+          }}
           fw={700}
           lh={1.15}
-          style={{ letterSpacing: "-1.4px" }}
+          style={{
+            letterSpacing: "-1.4px",
+          }}
         >
           {isRegister ? "Meet your new AI assistant." : "Welcome back to Nomi."}
         </Title>
 
-        <Text c={MUTED} fz={{ base: 14, sm: 15 }} lh={1.6}>
+        <Text
+          c={MUTED}
+          fz={{
+            base: 14,
+            sm: 15,
+          }}
+          lh={1.6}
+        >
           {isRegister
             ? "Create your account and let Nomi simplify everyday life at home."
             : "Your AI household assistant is ready when you are."}
         </Text>
+
+        {hasInvitationRedirect && (
+          <Text c={GREEN} fz={13} fw={600}>
+            Sign in or create your account to continue to your group invitation.
+          </Text>
+        )}
       </Stack>
 
       <form onSubmit={form.onSubmit(handleSubmit)}>
@@ -318,7 +394,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 
         <Anchor
           component={Link}
-          href={isRegister ? "/login" : "/register"}
+          href={alternateAuthUrl}
           fw={700}
           size="sm"
           c={GREEN}

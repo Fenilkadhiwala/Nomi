@@ -10,15 +10,15 @@ import {
   Group,
   Avatar,
 } from "@mantine/core";
-import { ChatInputBar } from "./ChatInputBar";
-import { getAIResponseStream, getMessages } from "../apis/api";
-import { ChatMessage } from "../types/types";
+
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Pusher from "pusher-js";
 import { useSearchParams } from "next/navigation";
 import { RobotIcon } from "@phosphor-icons/react";
-import { threadId } from "worker_threads";
+import { getAIResponseStream, getMessages } from "@/src/apis/api";
+import { ChatMessage } from "@/src/types/types";
+import { ChatInputBar } from "./ChatInputBar";
 
 export const ChatComponent = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -69,7 +69,6 @@ export const ChatComponent = () => {
 
   const fetchMessages = async () => {
     try {
-      console.log("here***********", threadId);
       const fetchedMessages = await getMessages(THREAD_ID);
 
       setMessages(fetchedMessages);
@@ -144,7 +143,7 @@ export const ChatComponent = () => {
     setLoading(true);
 
     try {
-      await getAIResponseStream(text, SENDER_ID, THREAD_ID);
+      await getAIResponseStream(text, THREAD_ID);
     } catch (error) {
       console.error("Failed to send message:", error);
     } finally {

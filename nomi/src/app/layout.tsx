@@ -5,6 +5,7 @@ import "@mantine/core/styles.css";
 import { MantineProvider } from "@mantine/core";
 import { mantineHtmlProps } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
+import "@mantine/notifications/styles.css";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

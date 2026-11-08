@@ -9,7 +9,6 @@ import {
   Stack,
   Text,
   Title,
-  Badge,
   SimpleGrid,
   UnstyledButton,
 } from "@mantine/core";
@@ -19,7 +18,6 @@ import {
   ShoppingCartIcon,
   WalletIcon,
   HouseIcon,
-  SparkleIcon,
 } from "@phosphor-icons/react";
 
 import { useEffect, useRef, useState } from "react";
@@ -27,23 +25,19 @@ import Pusher from "pusher-js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { ChatInputBar } from "@/src/components/ChatInputBar";
+import { MessageComposer } from "./MessageComposer";
+
 import { getAIResponseStream, getMessages } from "@/src/apis/api";
 
-import { AuthUser, ChatMessage } from "@/src/types/types";
+import type { AuthUser, ChatMessage } from "@/src/types/types";
 
 import { getApiError } from "@/src/lib/api/get-api-error";
 import { notify } from "@/src/lib/notifications/notifications";
-
-const GREEN = "#244B3C";
-const BACKGROUND = "#F7F6F2";
-const TEXT = "#202521";
-const MUTED = "#777D75";
-const BORDER = "#DDDED7";
+import { useGroupStore } from "@/src/store/useGroupStore";
+import { BACKGROUND, BORDER, GREEN, MUTED, TEXT } from "@/src/utils/constants";
 
 // Development-only conversation.
-// Replace with an authorized household conversation ID.
-const THREAD_ID = "t28";
+// Group-specific threads will be implemented separately.
 
 interface DashboardChatProps {
   user: AuthUser;
@@ -94,38 +88,44 @@ const suggestions = [
 
 export function DashboardChat({ user }: DashboardChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+
   const [loading, setLoading] = useState(false);
+
   const [loadingMessages, setLoadingMessages] = useState(true);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
 
-  // Keep this aligned with the identifier used by your
-  // existing message persistence and Pusher backend.
-  // Do not trust a sender ID supplied by the browser.
   const senderId = String(user.id);
+
+  const groups = useGroupStore((state) => state.groups);
+
+  const activeGroupId = useGroupStore((state) => state.activeGroupId);
+
+  const activeGroup =
+    groups.find((group) => group.id === activeGroupId) ?? null;
+  const threadId = activeGroup ? `group_${activeGroup.id}` : null;
+  console.log("active group", activeGroupId);
 
   useEffect(() => {
     let active = true;
 
+    if (!threadId) {
+      setMessages([]);
+      setLoadingMessages(false);
+      return;
+    }
+
     async function loadMessages() {
+      setLoadingMessages(true);
+
+      setMessages([]);
+
       try {
-        const fetched = await getMessages(THREAD_ID);
+        const fetched = await getMessages(threadId!);
 
         if (active) {
-          setMessages((previous) => {
-            const byId = new Map<string, ChatMessage>();
-
-            for (const message of fetched) {
-              byId.set(String(message.id), message);
-            }
-
-            for (const message of previous) {
-              byId.set(String(message.id), message);
-            }
-
-            return Array.from(byId.values());
-          });
+          setMessages(fetched);
         }
       } catch (error) {
         if (active) {
@@ -146,8 +146,9 @@ export function DashboardChat({ user }: DashboardChatProps) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [threadId]);
 
+  // Auto-scroll to latest message
   useEffect(() => {
     const viewport = viewportRef.current;
 
@@ -159,14 +160,19 @@ export function DashboardChat({ user }: DashboardChatProps) {
     });
   }, [messages, loading, loadingMessages]);
 
+  // Subscribe to real-time messages
+
   useEffect(() => {
+    if (!threadId) return;
+
     const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
     const cluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
 
     if (!key || !cluster) return;
 
     const pusher = new Pusher(key, { cluster });
-    const channelName = `household-${THREAD_ID}`;
+
+    const channelName = `household-${threadId}`;
     const channel = pusher.subscribe(channelName);
 
     const onNewMessage = (
@@ -209,18 +215,21 @@ export function DashboardChat({ user }: DashboardChatProps) {
       pusher.unsubscribe(channelName);
       pusher.disconnect();
     };
-  }, []);
+  }, [threadId]);
 
+  // Send message to Nomi
   const handleSend = async (value: string) => {
     const text = value.trim();
 
-    if (!text || sendingRef.current) return;
+    if (!text || !threadId || sendingRef.current || loadingMessages) {
+      return;
+    }
 
     sendingRef.current = true;
     setLoading(true);
 
     try {
-      await getAIResponseStream(text, senderId, THREAD_ID);
+      await getAIResponseStream(text, threadId);
     } catch (error) {
       notify.error({
         title: "Message not sent",
@@ -248,43 +257,12 @@ export function DashboardChat({ user }: DashboardChatProps) {
         overflow: "hidden",
       }}
     >
-      {/* Conversation heading */}
-      <Group
-        px={{ base: 16, sm: 28 }}
-        py={14}
-        justify="space-between"
-        bg="#FFFFFF"
-        style={{
-          borderBottom: `1px solid ${BORDER}`,
-          flexShrink: 0,
-        }}
-      >
-        <Group gap={12}>
-          <Avatar size={42} radius={13} bg="#E3EFE6" c={GREEN}>
-            <RobotIcon size={24} weight="fill" />
-          </Avatar>
-
-          <Box>
-            <Group gap={7}>
-              <Text fw={700} c={TEXT} fz={14}>
-                Nomi Assistant
-              </Text>
-
-              <Badge size="xs" variant="light" color="green">
-                AI
-              </Badge>
-            </Group>
-
-            <Text fz={11} c={MUTED}>
-              Your everyday household companion
-            </Text>
-          </Box>
-        </Group>
-      </Group>
-
-      {/* Messages */}
+      {/* Chat messages */}
       <ScrollArea
-        style={{ flex: 1, minHeight: 0 }}
+        style={{
+          flex: 1,
+          minHeight: 0,
+        }}
         viewportRef={viewportRef}
         type="auto"
         px={{ base: 14, sm: 28 }}
@@ -298,26 +276,22 @@ export function DashboardChat({ user }: DashboardChatProps) {
           )}
 
           {!loadingMessages && visibleMessages.length === 0 && (
-            <Stack align="center" gap={0} py={{ base: 30, sm: 65 }}>
-              <Box
-                w={76}
-                h={76}
-                bg="#E2EEE6"
-                mb={24}
-                style={{
-                  borderRadius: 24,
-                  display: "grid",
-                  placeItems: "center",
-                }}
-              >
-                <SparkleIcon size={36} color={GREEN} weight="fill" />
-              </Box>
-
+            <Stack
+              align="center"
+              gap={0}
+              py={{
+                base: 30,
+                sm: 65,
+              }}
+            >
               <Title
                 order={2}
                 ta="center"
                 c={TEXT}
-                fz={{ base: 25, sm: 32 }}
+                fz={{
+                  base: 25,
+                  sm: 32,
+                }}
                 fw={700}
                 style={{
                   letterSpacing: "-0.9px",
@@ -332,7 +306,10 @@ export function DashboardChat({ user }: DashboardChatProps) {
               </Text>
 
               <SimpleGrid
-                cols={{ base: 1, sm: 3 }}
+                cols={{
+                  base: 1,
+                  sm: 3,
+                }}
                 spacing={12}
                 mt={34}
                 w="100%"
@@ -502,29 +479,29 @@ export function DashboardChat({ user }: DashboardChatProps) {
         </Stack>
       </ScrollArea>
 
-      {/* Message composer */}
+      {/* Redesigned message composer */}
       <Box
-        px={{ base: 14, sm: 28 }}
-        pt={14}
-        pb={{ base: 14, sm: 20 }}
+        px={{
+          base: 14,
+          sm: 28,
+        }}
+        pt={12}
+        pb={{
+          base: 12,
+          sm: 16,
+        }}
         bg={BACKGROUND}
         style={{
-          borderTop: `1px solid ${BORDER}`,
           flexShrink: 0,
         }}
       >
         <Box maw={900} mx="auto">
-          <Paper
-            bg="#FFFFFF"
-            radius="lg"
-            p={6}
-            style={{
-              border: `1px solid ${BORDER}`,
-              boxShadow: "0 4px 20px rgba(36,75,60,0.04)",
-            }}
-          >
-            <ChatInputBar onSend={handleSend} />
-          </Paper>
+          <MessageComposer
+            onSend={handleSend}
+            sending={loading}
+            disabled={!threadId || loadingMessages}
+            groupName={activeGroup?.name}
+          />
 
           <Text ta="center" mt={10} c={MUTED} fz={10}>
             Nomi can make mistakes. Review important details before placing

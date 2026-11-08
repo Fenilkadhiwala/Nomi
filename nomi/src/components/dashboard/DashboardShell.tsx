@@ -1,9 +1,7 @@
 "use client";
 
 import {
-  ActionIcon,
   Avatar,
-  Badge,
   Box,
   Burger,
   Button,
@@ -11,75 +9,50 @@ import {
   Drawer,
   Group,
   Loader,
-  Menu,
-  Paper,
   ScrollArea,
   Stack,
   Text,
   Title,
-  Tooltip,
   UnstyledButton,
 } from "@mantine/core";
 
+import { GroupProfileDrawer } from "./GroupProfileDrawer";
+
 import {
-  ArrowRightIcon,
-  CaretDownIcon,
-  ChatCircleDotsIcon,
-  GearSixIcon,
-  HouseIcon,
-  ListChecksIcon,
   SignOutIcon,
-  SparkleIcon,
+  ShoppingCartIcon,
   WalletIcon,
 } from "@phosphor-icons/react";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+
 import { useEffect, useState } from "react";
 
-import { getLoggedInUser, logoutUser } from "@/src/apis/api";
+import {
+  getLoggedInUser,
+  getMyGroups,
+  getMyHouseholds,
+  logoutUser,
+} from "@/src/apis/api";
 
 import { getApiError } from "@/src/lib/api/get-api-error";
-import { AuthUser } from "@/src/types/types";
 import { notify } from "@/src/lib/notifications/notifications";
+
+import type { AuthUser } from "@/src/types/types";
+
 import { DashboardChat } from "./DashboardChat";
+import { GroupSidebar } from "./GroupSidebar";
+import { GroupHeader } from "./GroupHeader";
 
-const GREEN = "#244B3C";
-const BACKGROUND = "#F7F6F2";
-const TEXT = "#202521";
-const MUTED = "#777D75";
-const BORDER = "#DDDED7";
+import { useGroupStore } from "@/src/store/useGroupStore";
 
-type NavItem = {
-  label: string;
-  icon: typeof HouseIcon;
-  description?: string;
-  disabled?: boolean;
-};
-
-const navigation: NavItem[] = [
-  {
-    label: "AI Assistant",
-    icon: ChatCircleDotsIcon,
-  },
-  {
-    label: "Household",
-    icon: HouseIcon,
-    description: "Coming soon",
-    disabled: true,
-  },
-  {
-    label: "Groceries",
-    icon: ListChecksIcon,
-    description: "Coming soon",
-    disabled: true,
-  },
-  {
-    label: "Expenses",
-    icon: WalletIcon,
-    description: "Coming soon",
-    disabled: true,
-  },
-];
+import {
+  BACKGROUND,
+  GREEN,
+  MUTED,
+  SIDEBAR_MUTED,
+  TEXT,
+} from "@/src/utils/constants";
 
 function getInitials(name?: string) {
   if (!name) return "U";
@@ -108,116 +81,99 @@ function SidebarContent({
 }: SidebarContentProps) {
   return (
     <Stack h="100%" gap={0}>
-      <Box px={24} pt={30} pb={32}>
-        <Group gap={10}>
-          <Box
-            w={37}
-            h={37}
-            bg="rgba(255,255,255,0.12)"
-            style={{
-              borderRadius: 12,
-              display: "grid",
-              placeItems: "center",
-            }}
-          >
-            <SparkleIcon size={21} weight="fill" color="#FFFFFF" />
-          </Box>
+      {/* Nomi branding */}
+      <Box px={24} pt={28} pb={24}>
+        <Title
+          order={2}
+          c="white"
+          fz={27}
+          fw={750}
+          style={{
+            letterSpacing: "-1px",
+          }}
+        >
+          nomi.
+        </Title>
 
-          <Title
-            order={2}
-            c="white"
-            fz={27}
-            fw={750}
-            style={{ letterSpacing: "-1px" }}
-          >
-            nomi.
-          </Title>
-        </Group>
-
-        <Text mt={10} fz={12} c="#B8CFC0">
+        <Text mt={10} fz={12} c={SIDEBAR_MUTED}>
           Your everyday AI companion
         </Text>
       </Box>
 
-      <Box px={14}>
-        <Text
-          px={12}
-          mb={12}
-          fz={10}
-          fw={700}
-          c="#AFC6B7"
-          style={{ letterSpacing: "1.5px" }}
-        >
-          YOUR HOME
-        </Text>
+      <Divider color="rgba(255,255,255,0.12)" />
 
-        <Stack gap={5}>
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            const active = item.label === "AI Assistant";
+      {/* Sidebar navigation */}
+      <ScrollArea
+        style={{
+          flex: 1,
+          minHeight: 0,
+        }}
+        type="auto"
+        scrollbarSize={5}
+      >
+        <Box pb={24}>
+          <GroupSidebar onGroupSelect={onNavigate} />
 
-            return (
+          {/* Other navigation */}
+          <Box px={14} mt={25}>
+            <Divider color="rgba(255,255,255,0.12)" mb={20} />
+
+            <Stack gap={5}>
               <UnstyledButton
-                key={item.label}
-                disabled={item.disabled}
-                onClick={onNavigate}
+                disabled
                 style={{
                   width: "100%",
                   padding: "12px 14px",
                   borderRadius: 11,
-                  background: active ? "rgba(255,255,255,0.14)" : "transparent",
-                  opacity: item.disabled ? 0.52 : 1,
-                  cursor: item.disabled ? "not-allowed" : "pointer",
+                  opacity: 0.55,
+                  cursor: "not-allowed",
                 }}
               >
                 <Group justify="space-between" wrap="nowrap">
                   <Group gap={13} wrap="nowrap">
-                    <Icon
-                      size={21}
-                      weight={active ? "fill" : "regular"}
-                      color="#FFFFFF"
-                    />
+                    <ShoppingCartIcon size={21} color="#FFFFFF" />
 
-                    <Text c="white" fz={14} fw={active ? 650 : 450}>
-                      {item.label}
+                    <Text c="white" fz={14} fw={500}>
+                      Your Cart
                     </Text>
                   </Group>
 
-                  {item.disabled && (
-                    <Text c="#B8CFC0" fz={10}>
-                      Soon
-                    </Text>
-                  )}
+                  <Text c={SIDEBAR_MUTED} fz={10}>
+                    Soon
+                  </Text>
                 </Group>
               </UnstyledButton>
-            );
-          })}
-        </Stack>
-      </Box>
 
-      <Box px={24} mt={34}>
-        <Paper
-          p="md"
-          radius="lg"
-          bg="rgba(255,255,255,0.09)"
-          style={{
-            border: "1px solid rgba(255,255,255,0.12)",
-          }}
-        >
-          <SparkleIcon size={22} weight="fill" color="#CBE0D0" />
+              <UnstyledButton
+                disabled
+                style={{
+                  width: "100%",
+                  padding: "12px 14px",
+                  borderRadius: 11,
+                  opacity: 0.55,
+                  cursor: "not-allowed",
+                }}
+              >
+                <Group justify="space-between" wrap="nowrap">
+                  <Group gap={13} wrap="nowrap">
+                    <WalletIcon size={21} color="#FFFFFF" />
 
-          <Text mt={10} c="white" fw={650} fz={13}>
-            A little help, every day.
-          </Text>
+                    <Text c="white" fz={14} fw={500}>
+                      Expenses
+                    </Text>
+                  </Group>
 
-          <Text mt={5} c="#C1D4C7" fz={12} lh={1.6}>
-            Groceries, shared expenses, and household plans—all in one place.
-          </Text>
-        </Paper>
-      </Box>
+                  <Text c={SIDEBAR_MUTED} fz={10}>
+                    Soon
+                  </Text>
+                </Group>
+              </UnstyledButton>
+            </Stack>
+          </Box>
+        </Box>
+      </ScrollArea>
 
-      <Box style={{ flex: 1 }} />
-
+      {/* Account section */}
       <Divider color="rgba(255,255,255,0.13)" />
 
       <Box p={16}>
@@ -226,12 +182,17 @@ function SidebarContent({
             {getInitials(user.name)}
           </Avatar>
 
-          <Box style={{ flex: 1, minWidth: 0 }}>
+          <Box
+            style={{
+              flex: 1,
+              minWidth: 0,
+            }}
+          >
             <Text c="white" fw={650} fz={13} truncate>
               {user.name}
             </Text>
 
-            <Text c="#B8CFC0" fz={11} truncate>
+            <Text c={SIDEBAR_MUTED} fz={11} truncate>
               {user.email}
             </Text>
           </Box>
@@ -261,26 +222,98 @@ function SidebarContent({
 
 export function DashboardShell() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const requestedGroupIdParam = searchParams.get("groupId");
+
+  const requestedGroupId =
+    requestedGroupIdParam &&
+    /^\d+$/.test(requestedGroupIdParam) &&
+    Number.isSafeInteger(Number(requestedGroupIdParam)) &&
+    Number(requestedGroupIdParam) > 0
+      ? Number(requestedGroupIdParam)
+      : null;
+
+  const [groupProfileOpened, setGroupProfileOpened] = useState(false);
 
   const [user, setUser] = useState<AuthUser | null>(null);
+
   const [checkingAuth, setCheckingAuth] = useState(true);
+
   const [loggingOut, setLoggingOut] = useState(false);
+
   const [drawerOpened, setDrawerOpened] = useState(false);
 
+  const groups = useGroupStore((state) => state.groups);
+
+  const activeGroupId = useGroupStore((state) => state.activeGroupId);
+
+  const setGroups = useGroupStore((state) => state.setGroups);
+
+  const setActiveGroupId = useGroupStore((state) => state.setActiveGroupId);
+
+  const clearGroups = useGroupStore((state) => state.clearGroups);
+
+  const activeGroup =
+    groups.find((group) => group.id === activeGroupId) ?? null;
+
+  // Authenticate and load authorized groups.
   useEffect(() => {
     let active = true;
 
     const checkAuth = async () => {
+      setCheckingAuth(true);
+
       try {
         const currentUser = await getLoggedInUser();
 
         if (!active) return;
 
         if (!currentUser) {
+          clearGroups();
           router.replace("/login");
           return;
         }
 
+        // Load groups directly from the backend.
+        // The /groups endpoint must return only
+        // groups this user is authorized to access.
+        const myGroups = await getMyGroups();
+
+        if (!active) return;
+
+        if (myGroups.length > 0) {
+          setGroups(myGroups);
+
+          // Prefer the group specified by the
+          // invitation redirect when authorized.
+          if (
+            requestedGroupId !== null &&
+            myGroups.some((group) => group.id === requestedGroupId)
+          ) {
+            setActiveGroupId(requestedGroupId);
+          }
+
+          setUser(currentUser);
+          return;
+        }
+
+        // No groups: check household membership
+        // before deciding whether onboarding
+        // is appropriate.
+        const households = await getMyHouseholds();
+
+        if (!active) return;
+
+        clearGroups();
+
+        if (households.length === 0) {
+          router.replace("/onboarding");
+          return;
+        }
+
+        // A household member with no groups
+        // should not be forced into onboarding.
         setUser(currentUser);
       } catch (error) {
         if (!active) return;
@@ -301,8 +334,14 @@ export function DashboardShell() {
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [router, requestedGroupId, setGroups, setActiveGroupId, clearGroups]);
 
+  // Close the profile drawer when the group changes.
+  useEffect(() => {
+    setGroupProfileOpened(false);
+  }, [activeGroupId]);
+
+  // Logout
   const handleLogout = async () => {
     if (loggingOut) return;
 
@@ -310,6 +349,9 @@ export function DashboardShell() {
 
     try {
       await logoutUser();
+
+      clearGroups();
+      setUser(null);
 
       notify.success({
         title: "Signed out",
@@ -328,6 +370,7 @@ export function DashboardShell() {
     }
   };
 
+  // Loading screen
   if (checkingAuth) {
     return (
       <Box
@@ -340,6 +383,7 @@ export function DashboardShell() {
       >
         <Stack align="center" gap="md">
           <Loader color={GREEN} size="md" />
+
           <Text c={MUTED} fz={13}>
             Preparing your workspace...
           </Text>
@@ -348,6 +392,7 @@ export function DashboardShell() {
     );
   }
 
+  // Authentication error
   if (!user) {
     return (
       <Box
@@ -439,76 +484,86 @@ export function DashboardShell() {
           overflow: "hidden",
         }}
       >
-        <Group
-          h={76}
-          px={{ base: 16, sm: 28 }}
-          justify="space-between"
+        {/* Full-width white header */}
+        <Box
+          component="header"
+          w="100%"
+          h={84}
           bg="#FFFFFF"
+          px={{
+            base: 14,
+            sm: 24,
+          }}
           style={{
+            backgroundColor: "#FFFFFF",
+            display: "flex",
+            alignItems: "center",
             flexShrink: 0,
-            borderBottom: `1px solid ${BORDER}`,
+            borderBottom: "1px solid #E5E8E2",
+            boxSizing: "border-box",
           }}
         >
-          <Group gap={14}>
-            <Box hiddenFrom="md">
-              <Burger
-                opened={drawerOpened}
-                onClick={() => setDrawerOpened((v) => !v)}
-                color={GREEN}
-                size="sm"
-              />
-            </Box>
-            <Text fz={11} fw={600} c={MUTED}>
-              Your household, made easier
-            </Text>
+          {/* Mobile menu button */}
+          <Burger
+            opened={drawerOpened}
+            onClick={() => setDrawerOpened((previous) => !previous)}
+            hiddenFrom="md"
+            size="sm"
+            mr={12}
+            color={GREEN}
+            aria-label="Toggle navigation"
+          />
 
-            <Title order={2} fz={{ base: 18, sm: 21 }} fw={700} c={TEXT}>
-              Nomi Assistant
-            </Title>
-          </Group>
+          {/* Active group information */}
+          {activeGroup && (
+            <GroupHeader
+              name={activeGroup.name}
+              memberCount={activeGroup.member_count}
+              onClick={() => setGroupProfileOpened(true)}
+            />
+          )}
+        </Box>
 
-          <Group gap={12}>
-            <Badge variant="light" color="green" radius="xl">
-              Your household
-            </Badge>
+        {/* Selected group chat */}
+        {activeGroup ? (
+          <Box
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <DashboardChat user={user} />
+          </Box>
+        ) : (
+          <Box
+            style={{
+              flex: 1,
+              display: "grid",
+              placeItems: "center",
+              padding: 24,
+            }}
+          >
+            <Stack align="center" gap={12}>
+              <Title order={3} c={TEXT}>
+                Welcome to Nomi
+              </Title>
 
-            <Menu shadow="md" width={210} position="bottom-end">
-              <Menu.Target>
-                <UnstyledButton>
-                  <Group gap={8}>
-                    <Avatar size={37} radius="xl" bg="#E1EDE5" c={GREEN}>
-                      {getInitials(user.name)}
-                    </Avatar>
-
-                    <CaretDownIcon size={13} color={MUTED} />
-                  </Group>
-                </UnstyledButton>
-              </Menu.Target>
-
-              <Menu.Dropdown>
-                <Menu.Label>{user.email}</Menu.Label>
-
-                <Menu.Item leftSection={<GearSixIcon size={16} />} disabled>
-                  Account settings (soon)
-                </Menu.Item>
-
-                <Menu.Divider />
-
-                <Menu.Item
-                  color="red"
-                  leftSection={<SignOutIcon size={16} />}
-                  disabled={loggingOut}
-                  onClick={handleLogout}
-                >
-                  Sign out
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-          </Group>
-        </Group>
-
-        <DashboardChat user={user} />
+              <Text c={MUTED} fz={13} ta="center">
+                Select a group from the sidebar to start a conversation.
+              </Text>
+            </Stack>
+          </Box>
+        )}
       </Box>
+
+      <GroupProfileDrawer
+        opened={groupProfileOpened && !!activeGroup}
+        onClose={() => setGroupProfileOpened(false)}
+        group={activeGroup}
+        currentUserId={Number(user.id)}
+      />
     </Box>
   );
 }
