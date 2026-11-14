@@ -1,6 +1,9 @@
 import {
+  AddExistingGroupMembersResponse,
+  AddExistingMembersOptions,
   AuthResponse,
   AuthUser,
+  AvailableGroupMember,
   ChatMessage,
   CreateGroupPayload,
   CreateHouseholdPayload,
@@ -139,6 +142,28 @@ export async function getMyGroups(): Promise<HouseholdGroup[]> {
   return data.groups;
 }
 
+// Fetch unique existing users from every group
+// the authenticated user belongs to.
+//
+// Users are deduplicated across households
+// and the authenticated user is excluded.
+export async function getAvailableGroupMembers(): Promise<
+  AvailableGroupMember[]
+> {
+  const { data } = await api.get<{
+    members: AvailableGroupMember[];
+  }>("/groups/available-members");
+
+  return data.members;
+}
+
+// Create a private group.
+//
+// Optionally includes member_ids to directly
+// add eligible existing Nomi users.
+//
+// The backend validates membership eligibility
+// and assigns the creator as group owner.
 export async function createGroup(
   payload: CreateGroupPayload,
 ): Promise<HouseholdGroup> {
@@ -157,6 +182,23 @@ export async function getGroupMembers(groupId: number): Promise<GroupMember[]> {
   }>(`/groups/${groupId}/members`);
 
   return data.members;
+}
+
+export async function addExistingGroupMembers(
+  groupId: number,
+  memberIds: number[],
+  options: AddExistingMembersOptions = {},
+): Promise<AddExistingGroupMembersResponse> {
+  const { data } = await api.post<AddExistingGroupMembersResponse>(
+    `/groups/${groupId}/members`,
+    {
+      member_ids: memberIds,
+      include_main_household: options.include_main_household ?? false,
+      additional_group_ids: options.additional_group_ids ?? [],
+    },
+  );
+
+  return data;
 }
 
 export default api;

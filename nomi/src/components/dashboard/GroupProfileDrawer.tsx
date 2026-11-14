@@ -11,9 +11,12 @@ import {
   Drawer,
   Group,
   Loader,
+  Modal,
   ScrollArea,
+  Select,
   Stack,
   Text,
+  TextInput,
   Title,
   UnstyledButton,
 } from "@mantine/core";
@@ -31,17 +34,25 @@ import {
 
 import { useEffect, useState } from "react";
 
-import { getGroupMembers, inviteGroupMember } from "@/src/apis/api";
+import {
+  addExistingGroupMembers,
+  getGroupMembers,
+  getMyGroups,
+  getMyHouseholds,
+  inviteGroupMember,
+} from "@/src/apis/api";
 
+import { useGroupStore } from "@/src/store/useGroupStore";
 import { AddMemberModal } from "./AddMemberModal";
 
-import type { AddMemberInvitationOptions } from "./AddMemberModal";
+import type {
+  AddExistingMemberOptions,
+  AddMemberInvitationOptions,
+} from "./AddMemberModal";
 
 import { notify } from "@/src/lib/notifications/notifications";
 import { getApiError } from "@/src/lib/api/get-api-error";
-
 import { GREEN, MUTED, TEXT } from "@/src/utils/constants";
-
 import type { GroupMember } from "@/src/types/types";
 
 interface GroupProfileDrawerProps {
@@ -86,8 +97,19 @@ export function GroupProfileDrawer({
   const [error, setError] = useState<string | null>(null);
 
   const [addMemberOpened, setAddMemberOpened] = useState(false);
-
   const [inviting, setInviting] = useState(false);
+
+  const [renameOpened, setRenameOpened] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+
+  const [deleteOpened, setDeleteOpened] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+
+  const [exitOpened, setExitOpened] = useState(false);
+  const [exiting, setExiting] = useState(false);
+  const [newOwnerId, setNewOwnerId] = useState<string | null>(null);
 
   const groupId = group?.id;
 
@@ -97,6 +119,11 @@ export function GroupProfileDrawer({
       setError(null);
       setLoading(false);
       setAddMemberOpened(false);
+      setRenameOpened(false);
+      setExitOpened(false);
+      setDeleteOpened(false);
+      setDeleteConfirmation("");
+      setNewOwnerId(null);
       return;
     }
 
@@ -110,17 +137,13 @@ export function GroupProfileDrawer({
       try {
         const result = await getGroupMembers(groupId);
 
-        if (active) {
-          setMembers(result);
-        }
+        if (active) setMembers(result);
       } catch (err) {
         if (active) {
           setError(getApiError(err).message);
         }
       } finally {
-        if (active) {
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     };
 
@@ -131,10 +154,16 @@ export function GroupProfileDrawer({
     };
   }, [opened, groupId]);
 
+  useEffect(() => {
+    if (group) {
+      setRenameValue(group.name);
+    }
+  }, [group?.id, group?.name]);
+
   if (!group) return null;
 
   const currentMember = members.find(
-    (member) => Number(member.user_id) === currentUserId,
+    (member) => Number(member.user_id) === Number(currentUserId),
   );
 
   const canManage =
@@ -145,8 +174,71 @@ export function GroupProfileDrawer({
   const memberCount =
     !loading && !error ? members.length : (group.member_count ?? 0);
 
+  const otherMembers = members.filter(
+    (member) => Number(member.user_id) !== Number(currentUserId),
+  );
+
+  const isLastMember = members.length === 1;
+
+  const needsOwnershipTransfer = isOwner && otherMembers.length > 0;
+
+  const ownerOptions = otherMembers.map((member) => ({
+    value: String(member.user_id),
+    label: `${member.name} (${member.email})`,
+  }));
+
+  const refreshGroups = async () => {
+    const refreshed = await getMyGroups();
+    useGroupStore.getState().setGroups(refreshed);
+    return refreshed;
+  };
+
+  const refreshMembers = async () => {
+    const result = await getGroupMembers(group.id);
+    setMembers(result);
+    setError(null);
+    return result;
+  };
+
+  const handleAddExistingMembers = async (
+    memberIds: number[],
+    options: AddExistingMemberOptions = {},
+  ) => {
+    if (!canManage || inviting || memberIds.length === 0) {
+      return;
+    }
+
+    setInviting(true);
+
+    try {
+      await addExistingGroupMembers(group.id, memberIds, options);
+
+      // Refresh both the member list and the
+      // sidebar group counts.
+      await Promise.all([refreshMembers(), refreshGroups()]);
+
+      setAddMemberOpened(false);
+
+      window.dispatchEvent(new Event("nomi:memberships-changed"));
+
+      notify.success({
+        title: "Members added",
+        message: `${memberIds.length} member${
+          memberIds.length === 1 ? "" : "s"
+        } added successfully.`,
+      });
+    } catch (err) {
+      notify.error({
+        title: "Unable to add members",
+        message: getApiError(err).message,
+      });
+    } finally {
+      setInviting(false);
+    }
+  };
+
   const handleInvite = async (options: AddMemberInvitationOptions) => {
-    if (!group || inviting) return;
+    if (!canManage || inviting) return;
 
     setInviting(true);
 
@@ -161,61 +253,232 @@ export function GroupProfileDrawer({
       });
 
       notify.success({
-        title: "Invitation sent!",
-        message: `An invitation has been sent to ${options.email}.`,
+        title: "Invitation sent",
+        message: `An invitation was sent to ${options.email}.`,
       });
 
       setAddMemberOpened(false);
-    } catch (error) {
-      const apiError = getApiError(error);
+    } catch (err) {
+      const apiError = getApiError(err);
 
-      switch (apiError.code) {
-        case "INVITATION_EXISTS":
-          notify.warning({
-            title: "Invitation already pending",
-            message:
-              `An invitation has already been sent to ${options.email}. ` +
-              "Ask them to check their inbox.",
-          });
-          break;
-
-        case "ALREADY_MEMBER":
-          notify.warning({
-            title: "Already a member",
-            message: "This person is already a member of the selected group.",
-          });
-          break;
-
-        case "FORBIDDEN":
-          notify.error({
-            title: "Permission denied",
-            message:
-              "You don't have permission to invite members to these groups.",
-          });
-          break;
-
-        case "RATE_LIMITED":
-          notify.warning({
-            title: "Too many invitations",
-            message: "Please wait a while before sending another invitation.",
-          });
-          break;
-
-        case "EMAIL_SEND_FAILED":
-          notify.error({
-            title: "Email delivery failed",
-            message: "We couldn't send the invitation email. Please try again.",
-          });
-          break;
-
-        default:
-          notify.error({
-            title: "Unable to send invitation",
-            message: apiError.message,
-          });
+      if (apiError.code === "INVITATION_EXISTS") {
+        notify.warning({
+          title: "Invitation already pending",
+          message: "An invitation is already pending for this email.",
+        });
+      } else if (apiError.code === "ALREADY_MEMBER") {
+        notify.warning({
+          title: "Already a member",
+          message: "This person already belongs to this group.",
+        });
+      } else {
+        notify.error({
+          title: "Unable to send invitation",
+          message: apiError.message,
+        });
       }
     } finally {
       setInviting(false);
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!isOwner || deleting) return;
+
+    if (group.is_default && deleteConfirmation.trim() !== "DELETE") {
+      return;
+    }
+
+    setDeleting(true);
+
+    try {
+      const response = await fetch(`/api/groups/${group.id}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(
+          body?.error?.message ?? body?.message ?? "Unable to delete group.",
+        );
+      }
+
+      const [refreshedGroups, households] = await Promise.all([
+        getMyGroups(),
+        getMyHouseholds(),
+      ]);
+
+      const store = useGroupStore.getState();
+      const previousActiveId = store.activeGroupId;
+
+      store.setGroups(refreshedGroups);
+
+      if (
+        previousActiveId !== null &&
+        refreshedGroups.some(
+          (item) => Number(item.id) === Number(previousActiveId),
+        )
+      ) {
+        store.setActiveGroupId(Number(previousActiveId));
+      } else if (refreshedGroups.length > 0) {
+        store.setActiveGroupId(Number(refreshedGroups[0].id));
+      } else {
+        store.clearGroups();
+      }
+
+      setDeleteOpened(false);
+      setDeleteConfirmation("");
+      onClose();
+
+      window.dispatchEvent(new Event("nomi:memberships-changed"));
+
+      notify.success({
+        title: group.is_default ? "Household deleted" : "Group deleted",
+        message: group.is_default
+          ? households.length === 0
+            ? "Your household was deleted. You can create a new one."
+            : "Your household was deleted."
+          : `${group.name} has been permanently deleted.`,
+      });
+    } catch (err) {
+      notify.error({
+        title: "Unable to delete group",
+        message: getApiError(err).message,
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleRename = async () => {
+    if (!isOwner || renaming) return;
+
+    const name = renameValue.trim();
+
+    if (name.length < 2 || name.length > 100) {
+      notify.warning({
+        title: "Invalid group name",
+        message: "Group name must contain 2 to 100 characters.",
+      });
+      return;
+    }
+
+    if (name === group.name) {
+      setRenameOpened(false);
+      return;
+    }
+
+    setRenaming(true);
+
+    try {
+      const response = await fetch(`/api/groups/${group.id}`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(
+          body?.error?.message ?? body?.message ?? "Unable to rename group.",
+        );
+      }
+
+      await refreshGroups();
+      setRenameOpened(false);
+
+      notify.success({
+        title: "Group updated",
+        message: `Group renamed to ${name}.`,
+      });
+    } catch (err) {
+      notify.error({
+        title: "Unable to rename group",
+        message: getApiError(err).message,
+      });
+    } finally {
+      setRenaming(false);
+    }
+  };
+
+  const openExitModal = () => {
+    if (loading || error || !currentMember) return;
+
+    setNewOwnerId(null);
+    setExitOpened(true);
+  };
+
+  const handleExitGroup = async () => {
+    if (exiting || loading || !currentMember) {
+      return;
+    }
+
+    if (needsOwnershipTransfer && !newOwnerId) {
+      notify.warning({
+        title: "Select a new owner",
+        message: "Choose a member to become the group owner.",
+      });
+      return;
+    }
+
+    setExiting(true);
+
+    try {
+      const response = await fetch(`/api/groups/${group.id}/leave`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          needsOwnershipTransfer ? { new_owner_id: Number(newOwnerId) } : {},
+        ),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(
+          body?.error?.message ?? body?.message ?? "Unable to exit group.",
+        );
+      }
+
+      const result: {
+        group_deleted?: boolean;
+      } = await response.json();
+
+      const refreshed = await getMyGroups();
+      const store = useGroupStore.getState();
+
+      store.setGroups(refreshed);
+
+      if (refreshed.length > 0) {
+        store.setActiveGroupId(Number(refreshed[0].id));
+      } else {
+        store.clearGroups();
+      }
+
+      setExitOpened(false);
+      onClose();
+
+      window.dispatchEvent(new Event("nomi:memberships-changed"));
+
+      notify.success({
+        title: result.group_deleted ? "Group deleted" : "You left the group",
+        message: result.group_deleted
+          ? "You were the last member, so the group was deleted."
+          : "You have successfully left the group.",
+      });
+    } catch (err) {
+      notify.error({
+        title: "Unable to exit group",
+        message: getApiError(err).message,
+      });
+    } finally {
+      setExiting(false);
     }
   };
 
@@ -230,9 +493,7 @@ export function GroupProfileDrawer({
         withCloseButton={false}
         withinPortal
         zIndex={300}
-        overlayProps={{
-          backgroundOpacity: 0.2,
-        }}
+        overlayProps={{ backgroundOpacity: 0.2 }}
         transitionProps={{
           transition: "slide-up",
           duration: 300,
@@ -260,7 +521,6 @@ export function GroupProfileDrawer({
             overflow: "hidden",
           }}
         >
-          {/* Profile navigation bar */}
           <Box
             bg="#FFFFFF"
             px={{ base: 16, sm: 32 }}
@@ -288,7 +548,6 @@ export function GroupProfileDrawer({
                 <Text fw={700} fz={17} c={TEXT}>
                   Group info
                 </Text>
-
                 <Text fz={11} c={MUTED}>
                   {group.name}
                 </Text>
@@ -296,14 +555,7 @@ export function GroupProfileDrawer({
             </Group>
           </Box>
 
-          {/* Profile content */}
-          <ScrollArea
-            style={{
-              flex: 1,
-              minHeight: 0,
-            }}
-            scrollbarSize={6}
-          >
+          <ScrollArea style={{ flex: 1, minHeight: 0 }} scrollbarSize={6}>
             <Box
               maw={760}
               mx="auto"
@@ -377,19 +629,19 @@ export function GroupProfileDrawer({
                       leftSection={<PencilSimpleIcon size={19} />}
                       variant="default"
                       radius="xl"
-                      disabled
+                      disabled={!isOwner || loading || !!error}
+                      onClick={() => {
+                        setRenameValue(group.name);
+                        setRenameOpened(true);
+                      }}
                     >
                       Edit group
                     </Button>
                   </Group>
-
-                  <Text fz={11} c={MUTED} ta="center">
-                    Additional group management features are coming soon.
-                  </Text>
                 </Stack>
               </Box>
 
-              {/* Members */}
+              {/* Member list */}
               <Box
                 bg="#FFFFFF"
                 p={{ base: 20, sm: 26 }}
@@ -403,7 +655,6 @@ export function GroupProfileDrawer({
                   <Text fw={700} fz={15} c={TEXT}>
                     Members
                   </Text>
-
                   <Text fz={12} c={MUTED}>
                     {memberCount}
                   </Text>
@@ -412,7 +663,6 @@ export function GroupProfileDrawer({
                 {loading ? (
                   <Stack align="center" py={30} gap={12}>
                     <Loader size="sm" color={GREEN} />
-
                     <Text fz={12} c={MUTED}>
                       Loading members...
                     </Text>
@@ -428,7 +678,8 @@ export function GroupProfileDrawer({
                 ) : (
                   <Stack gap={0}>
                     {members.map((member, index) => {
-                      const isMe = Number(member.user_id) === currentUserId;
+                      const isMe =
+                        Number(member.user_id) === Number(currentUserId);
 
                       return (
                         <Box key={member.user_id}>
@@ -452,7 +703,6 @@ export function GroupProfileDrawer({
                                 {member.name}
                                 {isMe ? " (You)" : ""}
                               </Text>
-
                               <Text fz={12} c={MUTED} truncate>
                                 {member.email}
                               </Text>
@@ -496,18 +746,17 @@ export function GroupProfileDrawer({
 
                 <Stack gap={6}>
                   <UnstyledButton
-                    disabled
+                    disabled={loading || !!error || !currentMember}
+                    onClick={openExitModal}
                     style={{
                       display: "flex",
                       alignItems: "center",
                       gap: 12,
                       padding: "13px 8px",
-                      opacity: 0.5,
                       borderRadius: 10,
                     }}
                   >
                     <SignOutIcon size={21} color="#B45353" />
-
                     <Text fz={14} c="#B45353">
                       Exit group
                     </Text>
@@ -516,22 +765,25 @@ export function GroupProfileDrawer({
                   {isOwner && (
                     <>
                       <Divider color="#F0F1ED" />
-
                       <UnstyledButton
-                        disabled
+                        onClick={() => {
+                          setDeleteConfirmation("");
+                          setDeleteOpened(true);
+                        }}
+                        disabled={loading || !!error || deleting}
                         style={{
                           display: "flex",
                           alignItems: "center",
                           gap: 12,
                           padding: "13px 8px",
-                          opacity: 0.5,
                           borderRadius: 10,
                         }}
                       >
                         <TrashIcon size={21} color="#B45353" />
-
                         <Text fz={14} c="#B45353">
-                          Delete group
+                          {group.is_default
+                            ? "Delete household"
+                            : "Delete group"}
                         </Text>
                       </UnstyledButton>
                     </>
@@ -543,15 +795,214 @@ export function GroupProfileDrawer({
         </Box>
       </Drawer>
 
-      {/* Invitation modal */}
+      {/* Both Existing Users and Invite by Email */}
       <AddMemberModal
-        opened={opened && addMemberOpened}
+        opened={addMemberOpened}
         onClose={() => setAddMemberOpened(false)}
+        groupId={group.id}
         groupName={group.name}
         isDefaultGroup={group.is_default}
+        existingMemberIds={members.map((member) => Number(member.user_id))}
         onInvite={handleInvite}
+        onAddExisting={handleAddExistingMembers}
         loading={inviting}
       />
+
+      {/* Delete confirmation */}
+      <Modal
+        opened={deleteOpened}
+        onClose={() => {
+          if (!deleting) setDeleteOpened(false);
+        }}
+        title={group.is_default ? "Delete your household?" : "Delete group?"}
+        centered
+        radius="lg"
+        zIndex={400}
+        closeOnClickOutside={!deleting}
+        closeOnEscape={!deleting}
+      >
+        <Stack gap="md">
+          <Alert color="red" icon={<WarningCircleIcon size={20} />} radius="md">
+            This action cannot be undone.
+          </Alert>
+
+          {group.is_default ? (
+            <>
+              <Text fz={13} c={MUTED} lh={1.7}>
+                You are about to permanently delete your Main Household
+                <strong> {group.name}</strong>. All household members will lose
+                access to this household.
+              </Text>
+
+              <Text fz={13} c={MUTED} lh={1.7}>
+                The household and its associated data will be deleted.
+                Independent private-group memberships should remain unaffected.
+              </Text>
+
+              <TextInput
+                label="Type DELETE to confirm"
+                placeholder="DELETE"
+                value={deleteConfirmation}
+                onChange={(event) =>
+                  setDeleteConfirmation(event.currentTarget.value)
+                }
+                disabled={deleting}
+                autoComplete="off"
+              />
+            </>
+          ) : (
+            <Text fz={13} c={MUTED} lh={1.7}>
+              Are you sure you want to permanently delete{" "}
+              <strong>{group.name}</strong>? Members will lose access to its
+              conversation history.
+            </Text>
+          )}
+
+          <Group justify="flex-end" mt="sm">
+            <Button
+              variant="default"
+              disabled={deleting}
+              onClick={() => setDeleteOpened(false)}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              color="red"
+              loading={deleting}
+              disabled={
+                group.is_default && deleteConfirmation.trim() !== "DELETE"
+              }
+              onClick={() => void handleDeleteGroup()}
+            >
+              {group.is_default ? "Delete household" : "Delete group"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Rename group */}
+      <Modal
+        opened={renameOpened}
+        onClose={() => {
+          if (!renaming) setRenameOpened(false);
+        }}
+        title="Edit group name"
+        centered
+        radius="lg"
+        zIndex={400}
+        closeOnClickOutside={!renaming}
+        closeOnEscape={!renaming}
+      >
+        <Stack gap="md">
+          <TextInput
+            label="Group name"
+            placeholder="Enter group name"
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.currentTarget.value)}
+            maxLength={100}
+            disabled={renaming}
+          />
+
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => setRenameOpened(false)}
+              disabled={renaming}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              color="green"
+              loading={renaming}
+              disabled={
+                renameValue.trim().length < 2 || renameValue.trim().length > 100
+              }
+              onClick={() => void handleRename()}
+            >
+              Save changes
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Exit and ownership transfer */}
+      <Modal
+        opened={exitOpened}
+        onClose={() => {
+          if (!exiting) {
+            setExitOpened(false);
+            setNewOwnerId(null);
+          }
+        }}
+        title={
+          needsOwnershipTransfer ? "Transfer ownership and exit" : "Exit group?"
+        }
+        centered
+        radius="lg"
+        zIndex={400}
+        closeOnClickOutside={!exiting}
+        closeOnEscape={!exiting}
+      >
+        <Stack gap="md">
+          {needsOwnershipTransfer ? (
+            <>
+              <Text fz={13} c={MUTED} lh={1.6}>
+                Select an existing member to become the new owner before you
+                leave {group.name}.
+              </Text>
+
+              <Select
+                label="New group owner"
+                placeholder="Select a member"
+                data={ownerOptions}
+                value={newOwnerId}
+                onChange={setNewOwnerId}
+                searchable
+                clearable
+                disabled={exiting}
+                comboboxProps={{
+                  withinPortal: true,
+                  zIndex: 600,
+                }}
+              />
+            </>
+          ) : isLastMember ? (
+            <Text fz={13} c={MUTED} lh={1.6}>
+              You're the last member of this group. Leaving will automatically
+              delete the group and its chat history.
+            </Text>
+          ) : (
+            <Text fz={13} c={MUTED} lh={1.6}>
+              Are you sure you want to leave {group.name}? You will no longer
+              have access to this group's conversation.
+            </Text>
+          )}
+
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              disabled={exiting}
+              onClick={() => {
+                setExitOpened(false);
+                setNewOwnerId(null);
+              }}
+            >
+              Cancel
+            </Button>
+
+            <Button
+              color="red"
+              loading={exiting}
+              disabled={needsOwnershipTransfer && !newOwnerId}
+              onClick={() => void handleExitGroup()}
+            >
+              {needsOwnershipTransfer ? "Transfer and exit" : "Exit group"}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </>
   );
 }

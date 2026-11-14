@@ -1,9 +1,29 @@
+export type GroupSystemEventType =
+  | "member_added"
+  | "member_left"
+  | "group_renamed"
+  | "household_member_added"
+  | "member_invited"
+  | "household_member_invited"
+  | "invitation_accepted"
+  | "household_invitation_accepted"
+  | "household_member_left";
+
+export interface GroupSystemMessageMetadata {
+  event_type: GroupSystemEventType;
+  actor_id: number;
+  member_id?: number;
+  old_name?: string;
+  new_name?: string;
+}
+
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: string;
   sender_id?: string;
   created_at?: string;
+  metadata?: GroupSystemMessageMetadata | null;
 }
 
 export interface LoginPayload {
@@ -68,4 +88,33 @@ export interface GroupMember {
 export interface CreateGroupPayload {
   household_id: number;
   name: string;
+  member_ids?: number[];
+  include_main_household: any;
+}
+
+export interface AvailableGroupMember {
+  id: number;
+  name: string;
+  email: string;
+  main_household_member: boolean;
+}
+
+export interface AvailableGroupMembersResponse {
+  members: AvailableGroupMember[];
+}
+
+export interface AddExistingGroupMembersResponse {
+  success: boolean;
+  group_id: number;
+  added_count: number;
+  added_members: Array<{
+    id: number;
+    name: string;
+    email: string;
+  }>;
+}
+
+export interface AddExistingMembersOptions {
+  include_main_household?: boolean;
+  additional_group_ids?: number[];
 }

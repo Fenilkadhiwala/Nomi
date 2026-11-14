@@ -12,26 +12,26 @@ interface MessageRow {
   sender_id: string;
   role: string;
   content: string;
+  metadata: Record<string, unknown> | null;
   created_at: Date;
 }
 
 export async function GET(request: NextRequest) {
   try {
-    // 1. Authenticate user
+    // 1. Authenticate user.
     const user = await getCurrentUser();
 
     if (!user) {
       throw new ApiError(401, "UNAUTHORIZED", "Please sign in to continue.");
     }
 
-    // 2. Read thread ID
+    // 2. Read and validate the group thread ID.
     const threadId = request.nextUrl.searchParams.get("threadId");
 
     if (!threadId) {
       throw new ApiError(400, "VALIDATION_ERROR", "Thread ID is required.");
     }
 
-    // 3. Validate group thread format: group_123
     const match = /^group_([1-9]\d*)$/.exec(threadId);
 
     if (!match) {
@@ -48,22 +48,18 @@ export async function GET(request: NextRequest) {
       throw new ApiError(400, "VALIDATION_ERROR", "Invalid group ID.");
     }
 
-    // 4. Verify group and household membership
+    // 3. Verify the user belongs to this group.
+    //
+    // Private group membership is independent
+    // of household membership.
     const accessResult = await pool.query(
       `
         SELECT 1
-        FROM public.household_groups g
-
-        INNER JOIN public.household_group_members gm
-          ON gm.group_id = g.id
-
-        INNER JOIN public.household_members hm
-          ON hm.household_id = g.household_id
-          AND hm.user_id = gm.user_id
-
-        WHERE g.id = $1
+        FROM public.household_group_members gm
+        INNER JOIN public.household_groups g
+          ON g.id = gm.group_id
+        WHERE gm.group_id = $1
           AND gm.user_id = $2
-
         LIMIT 1
       `,
       [groupId, user.id],
@@ -73,7 +69,8 @@ export async function GET(request: NextRequest) {
       throw new ApiError(404, "NOT_FOUND", "Group conversation not found.");
     }
 
-    // 5. Fetch messages for authorized group
+    // 4. Fetch messages, including persistent
+    // system-event metadata.
     const result = await pool.query<MessageRow>(
       `
         SELECT
@@ -81,6 +78,7 @@ export async function GET(request: NextRequest) {
           sender_id,
           role,
           content,
+          metadata,
           created_at
         FROM public.messages
         WHERE thread_id = $1
@@ -89,7 +87,7 @@ export async function GET(request: NextRequest) {
       [threadId],
     );
 
-    // 6. Return messages
+    // 5. Return the authorized conversation.
     return NextResponse.json(
       {
         threadId,

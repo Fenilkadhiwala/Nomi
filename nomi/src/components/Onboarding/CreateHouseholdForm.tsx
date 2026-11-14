@@ -30,7 +30,10 @@ import { useMemo, useRef, useState } from "react";
 import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 
-import { createHousehold } from "@/src/apis/api";
+import { createHousehold, getMyGroups } from "@/src/apis/api";
+
+import { useGroupStore } from "@/src/store/useGroupStore";
+
 import { getApiError } from "@/src/lib/api/get-api-error";
 import { notify } from "@/src/lib/notifications/notifications";
 
@@ -67,6 +70,16 @@ export function CreateHouseholdForm() {
 
   const [loading, setLoading] = useState(false);
   const submittingRef = useRef(false);
+
+  const groups = useGroupStore((state) => state.groups);
+
+  const setGroups = useGroupStore((state) => state.setGroups);
+
+  const setActiveGroupId = useGroupStore((state) => state.setActiveGroupId);
+
+  // Users who already have groups arrived
+  // from the dashboard rather than initial onboarding.
+  const cameFromDashboard = groups.length > 0;
 
   const countryOptions = useMemo(() => {
     const countryNames = countries.getNames("en", {
@@ -136,6 +149,15 @@ export function CreateHouseholdForm() {
     },
   });
 
+  const handleBack = () => {
+    if (cameFromDashboard) {
+      router.push("/dashboard");
+      return;
+    }
+
+    router.push("/onboarding");
+  };
+
   const handleSubmit = async (values: CreateHouseholdValues) => {
     if (submittingRef.current) return;
 
@@ -143,7 +165,8 @@ export function CreateHouseholdForm() {
     setLoading(true);
 
     try {
-      const result = await createHousehold({
+      // 1. Create household and its default group.
+      const result: any = await createHousehold({
         address_line_1: values.address_line_1.trim(),
 
         address_line_2: values.address_line_2.trim() || null,
@@ -154,17 +177,63 @@ export function CreateHouseholdForm() {
         country: values.country,
       });
 
+      // 2. Fetch all authorized groups again.
+      // This preserves existing invited groups
+      // and includes the newly created household group.
+      let groupsRefreshed = false;
+
+      try {
+        const updatedGroups = await getMyGroups();
+
+        setGroups(updatedGroups);
+
+        // Select the new default group after
+        // it has been added to Zustand.
+        if (
+          updatedGroups.some((group) => group.id === result.defaultGroup.id)
+        ) {
+          setActiveGroupId(result.defaultGroup.id);
+
+          groupsRefreshed = true;
+        }
+      } catch (refreshError) {
+        console.error(
+          "Unable to refresh groups after household creation:",
+          refreshError,
+        );
+      }
+
+      // 3. Show success notification.
       notify.success({
         title: "Household created",
-        message: "Your household is ready!",
+        message:
+          "Your household is ready! You can now invite roommates and start collaborating.",
       });
 
-      router.replace("/dashboard");
+      // 4. Redirect to the newly created group.
+      //
+      // DashboardShell also reads groupId and
+      // selects the authorized group when it loads.
+      router.replace(`/dashboard?groupId=${result.defaultGroup.id}`);
+
       router.refresh();
     } catch (error) {
+      const apiError = getApiError(error);
+
+      if (apiError.code === "HOUSEHOLD_ALREADY_EXISTS") {
+        notify.warning({
+          title: "Household already exists",
+          message:
+            "You're already a member of a household. Redirecting to your dashboard.",
+        });
+
+        router.replace("/dashboard");
+        return;
+      }
+
       notify.error({
         title: "Unable to create household",
-        message: getApiError(error).message,
+        message: apiError.message,
       });
     } finally {
       submittingRef.current = false;
@@ -180,7 +249,8 @@ export function CreateHouseholdForm() {
         type="button"
         c={MUTED}
         fz={12}
-        onClick={() => router.push("/onboarding")}
+        onClick={handleBack}
+        disabled={loading}
       >
         <Group gap={6}>
           <ArrowLeftIcon size={15} />

@@ -16,9 +16,8 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 
-import { GroupProfileDrawer } from "./GroupProfileDrawer";
-
 import {
+  HouseLineIcon,
   SignOutIcon,
   ShoppingCartIcon,
   WalletIcon,
@@ -26,14 +25,9 @@ import {
 
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import {
-  getLoggedInUser,
-  getMyGroups,
-  getMyHouseholds,
-  logoutUser,
-} from "@/src/apis/api";
+import { getLoggedInUser, getMyGroups, logoutUser } from "@/src/apis/api";
 
 import { getApiError } from "@/src/lib/api/get-api-error";
 import { notify } from "@/src/lib/notifications/notifications";
@@ -43,6 +37,7 @@ import type { AuthUser } from "@/src/types/types";
 import { DashboardChat } from "./DashboardChat";
 import { GroupSidebar } from "./GroupSidebar";
 import { GroupHeader } from "./GroupHeader";
+import { GroupProfileDrawer } from "./GroupProfileDrawer";
 
 import { useGroupStore } from "@/src/store/useGroupStore";
 
@@ -57,19 +52,23 @@ import {
 function getInitials(name?: string) {
   if (!name) return "U";
 
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase() || "U"
+  );
 }
 
 interface SidebarContentProps {
   user: AuthUser;
   onLogout: () => Promise<void>;
   loggingOut: boolean;
+  canCreateHousehold: boolean;
+  onCreateHousehold: () => void;
   onNavigate?: () => void;
 }
 
@@ -77,11 +76,13 @@ function SidebarContent({
   user,
   onLogout,
   loggingOut,
+  canCreateHousehold,
+  onCreateHousehold,
   onNavigate,
 }: SidebarContentProps) {
   return (
     <Stack h="100%" gap={0}>
-      {/* Nomi branding */}
+      {/* Branding */}
       <Box px={24} pt={28} pb={24}>
         <Title
           order={2}
@@ -102,7 +103,7 @@ function SidebarContent({
 
       <Divider color="rgba(255,255,255,0.12)" />
 
-      {/* Sidebar navigation */}
+      {/* Groups and navigation */}
       <ScrollArea
         style={{
           flex: 1,
@@ -113,6 +114,37 @@ function SidebarContent({
       >
         <Box pb={24}>
           <GroupSidebar onGroupSelect={onNavigate} />
+
+          {/* Users without a Main Household can create one.
+              Their private groups remain available. */}
+          {canCreateHousehold && (
+            <Box px={14} mt={16}>
+              <UnstyledButton
+                onClick={onCreateHousehold}
+                style={{
+                  width: "100%",
+                  padding: "13px 14px",
+                  borderRadius: 11,
+                  background: "rgba(255,255,255,0.12)",
+                  border: "1px solid rgba(255,255,255,0.18)",
+                }}
+              >
+                <Group gap={12} wrap="nowrap">
+                  <HouseLineIcon size={21} color="#FFFFFF" />
+
+                  <Box style={{ minWidth: 0 }}>
+                    <Text c="white" fz={14} fw={600}>
+                      Create Household
+                    </Text>
+
+                    <Text c={SIDEBAR_MUTED} fz={11}>
+                      Set up your own home
+                    </Text>
+                  </Box>
+                </Group>
+              </UnstyledButton>
+            </Box>
+          )}
 
           {/* Other navigation */}
           <Box px={14} mt={25}>
@@ -173,7 +205,7 @@ function SidebarContent({
         </Box>
       </ScrollArea>
 
-      {/* Account section */}
+      {/* Account */}
       <Divider color="rgba(255,255,255,0.13)" />
 
       <Box p={16}>
@@ -244,6 +276,8 @@ export function DashboardShell() {
 
   const [drawerOpened, setDrawerOpened] = useState(false);
 
+  const [canCreateHousehold, setCanCreateHousehold] = useState(false);
+
   const groups = useGroupStore((state) => state.groups);
 
   const activeGroupId = useGroupStore((state) => state.activeGroupId);
@@ -257,7 +291,56 @@ export function DashboardShell() {
   const activeGroup =
     groups.find((group) => group.id === activeGroupId) ?? null;
 
-  // Authenticate and load authorized groups.
+  // Prevent outdated asynchronous refreshes from
+  // overwriting a more recent membership refresh.
+  const refreshVersionRef = useRef(0);
+
+  const refreshMemberships = useCallback(
+    async (preferredGroupId?: number | null) => {
+      const version = ++refreshVersionRef.current;
+
+      const myGroups = await getMyGroups();
+
+      if (version !== refreshVersionRef.current) {
+        return;
+      }
+
+      // Main Household is the household.
+      // Private groups do not prevent household creation.
+      const hasMainHousehold = myGroups.some(
+        (group) => group.is_default === true,
+      );
+
+      setCanCreateHousehold(!hasMainHousehold);
+
+      const store = useGroupStore.getState();
+      const currentActiveGroupId = store.activeGroupId;
+
+      store.setGroups(myGroups);
+
+      const preferred =
+        preferredGroupId ?? requestedGroupId ?? currentActiveGroupId;
+
+      if (
+        preferred !== null &&
+        myGroups.some((group) => Number(group.id) === Number(preferred))
+      ) {
+        store.setActiveGroupId(Number(preferred));
+      } else if (myGroups.length > 0) {
+        store.setActiveGroupId(Number(myGroups[0].id));
+      } else {
+        store.clearGroups();
+      }
+
+      return {
+        myGroups,
+        hasMainHousehold,
+      };
+    },
+    [requestedGroupId],
+  );
+
+  // Initial authentication.
   useEffect(() => {
     let active = true;
 
@@ -275,46 +358,23 @@ export function DashboardShell() {
           return;
         }
 
-        // Load groups directly from the backend.
-        // The /groups endpoint must return only
-        // groups this user is authorized to access.
-        const myGroups = await getMyGroups();
+        const result = await refreshMemberships(requestedGroupId);
 
         if (!active) return;
 
-        if (myGroups.length > 0) {
-          setGroups(myGroups);
+        setUser(currentUser);
 
-          // Prefer the group specified by the
-          // invitation redirect when authorized.
-          if (
-            requestedGroupId !== null &&
-            myGroups.some((group) => group.id === requestedGroupId)
-          ) {
-            setActiveGroupId(requestedGroupId);
-          }
-
-          setUser(currentUser);
-          return;
-        }
-
-        // No groups: check household membership
-        // before deciding whether onboarding
-        // is appropriate.
-        const households = await getMyHouseholds();
-
-        if (!active) return;
-
-        clearGroups();
-
-        if (households.length === 0) {
+        // A user without a household can still
+        // access Nomi through private groups.
+        if (
+          result &&
+          result.myGroups.length === 0 &&
+          !result.hasMainHousehold
+        ) {
+          // No groups at all: show onboarding.
           router.replace("/onboarding");
           return;
         }
-
-        // A household member with no groups
-        // should not be forced into onboarding.
-        setUser(currentUser);
       } catch (error) {
         if (!active) return;
 
@@ -334,14 +394,55 @@ export function DashboardShell() {
     return () => {
       active = false;
     };
-  }, [router, requestedGroupId, setGroups, setActiveGroupId, clearGroups]);
+  }, [router, requestedGroupId, clearGroups, refreshMemberships]);
 
-  // Close the profile drawer when the group changes.
+  // React to local group deletion, group exit,
+  // household creation, and membership changes.
+  useEffect(() => {
+    const handleMembershipChange = () => {
+      void refreshMemberships().catch((error) => {
+        console.error("Unable to refresh memberships:", error);
+
+        notify.error({
+          title: "Unable to refresh groups",
+          message: getApiError(error).message,
+        });
+      });
+    };
+
+    window.addEventListener("nomi:memberships-changed", handleMembershipChange);
+
+    return () => {
+      window.removeEventListener(
+        "nomi:memberships-changed",
+        handleMembershipChange,
+      );
+    };
+  }, [refreshMemberships]);
+
+  // Refresh when the dashboard becomes visible again.
+  // This helps after changes in another browser tab.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshMemberships().catch((error) => {
+          console.error("Visibility membership refresh failed:", error);
+        });
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [refreshMemberships]);
+
+  // Close profile when selected group changes.
   useEffect(() => {
     setGroupProfileOpened(false);
   }, [activeGroupId]);
 
-  // Logout
   const handleLogout = async () => {
     if (loggingOut) return;
 
@@ -350,7 +451,11 @@ export function DashboardShell() {
     try {
       await logoutUser();
 
+      // Invalidate any pending membership refresh.
+      refreshVersionRef.current += 1;
+
       clearGroups();
+      setCanCreateHousehold(false);
       setUser(null);
 
       notify.success({
@@ -370,7 +475,12 @@ export function DashboardShell() {
     }
   };
 
-  // Loading screen
+  const handleCreateHousehold = () => {
+    setDrawerOpened(false);
+
+    router.push("/onboarding/create-household");
+  };
+
   if (checkingAuth) {
     return (
       <Box
@@ -392,7 +502,6 @@ export function DashboardShell() {
     );
   }
 
-  // Authentication error
   if (!user) {
     return (
       <Box
@@ -444,6 +553,8 @@ export function DashboardShell() {
           user={user}
           onLogout={handleLogout}
           loggingOut={loggingOut}
+          canCreateHousehold={canCreateHousehold}
+          onCreateHousehold={handleCreateHousehold}
         />
       </Box>
 
@@ -470,6 +581,8 @@ export function DashboardShell() {
           user={user}
           onLogout={handleLogout}
           loggingOut={loggingOut}
+          canCreateHousehold={canCreateHousehold}
+          onCreateHousehold={handleCreateHousehold}
           onNavigate={() => setDrawerOpened(false)}
         />
       </Drawer>
@@ -484,7 +597,6 @@ export function DashboardShell() {
           overflow: "hidden",
         }}
       >
-        {/* Full-width white header */}
         <Box
           component="header"
           w="100%"
@@ -503,7 +615,6 @@ export function DashboardShell() {
             boxSizing: "border-box",
           }}
         >
-          {/* Mobile menu button */}
           <Burger
             opened={drawerOpened}
             onClick={() => setDrawerOpened((previous) => !previous)}
@@ -514,7 +625,6 @@ export function DashboardShell() {
             aria-label="Toggle navigation"
           />
 
-          {/* Active group information */}
           {activeGroup && (
             <GroupHeader
               name={activeGroup.name}
@@ -524,7 +634,6 @@ export function DashboardShell() {
           )}
         </Box>
 
-        {/* Selected group chat */}
         {activeGroup ? (
           <Box
             style={{
@@ -534,7 +643,7 @@ export function DashboardShell() {
               flexDirection: "column",
             }}
           >
-            <DashboardChat user={user} />
+            <DashboardChat key={activeGroup.id} user={user} />
           </Box>
         ) : (
           <Box
@@ -551,8 +660,20 @@ export function DashboardShell() {
               </Title>
 
               <Text c={MUTED} fz={13} ta="center">
-                Select a group from the sidebar to start a conversation.
+                {canCreateHousehold
+                  ? "Create a household or join a private group to start using Nomi."
+                  : "Select a group from the sidebar to start a conversation."}
               </Text>
+
+              {canCreateHousehold && (
+                <Button
+                  color="green"
+                  leftSection={<HouseLineIcon size={18} />}
+                  onClick={handleCreateHousehold}
+                >
+                  Create Household
+                </Button>
+              )}
             </Stack>
           </Box>
         )}

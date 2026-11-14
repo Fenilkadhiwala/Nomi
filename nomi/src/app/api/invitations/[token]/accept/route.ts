@@ -6,6 +6,18 @@ import { pool } from "@/src/lib/db/pool";
 import { ApiError, handleApiError } from "@/src/lib/api/api-error";
 import { getCurrentUser } from "@/src/lib/auth/auth";
 
+import {
+  forbiddenOriginResponse,
+  verifyRequestOrigin,
+} from "@/src/lib/auth/auth-request";
+
+import {
+  saveGroupSystemMessage,
+  publishGroupSystemMessages,
+  notifyGroupMembershipChanges,
+  type SavedGroupSystemMessage,
+} from "@/src/lib/groups/group-system-messages";
+
 export const runtime = "nodejs";
 
 type RouteContext = {
@@ -15,8 +27,8 @@ type RouteContext = {
 type InvitationRow = {
   id: string;
   group_id: number;
-  household_id: number;
   invited_email: string;
+  invited_by: number;
   status: string;
   expires_at: Date | string;
 };
@@ -24,45 +36,38 @@ type InvitationRow = {
 type TargetGroupRow = {
   id: number;
   name: string;
-  household_id: number;
+  household_id: number | null;
   is_default: boolean;
-};
-
-type MembershipResult = {
-  groupId: number;
-  groupName: string;
-  isDefault: boolean;
 };
 
 async function insertGroupMembership(
   client: PoolClient,
   groupId: number,
   userId: number,
-) {
-  await client.query(
+): Promise<boolean> {
+  const result = await client.query<{ user_id: number }>(
     `
       INSERT INTO public.household_group_members (
         group_id,
         user_id,
         role
       )
-      SELECT $1, $2, 'member'
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM public.household_group_members
-        WHERE group_id = $1
-          AND user_id = $2
-      )
+      VALUES ($1, $2, 'member')
+      ON CONFLICT (group_id, user_id)
+      DO NOTHING
+      RETURNING user_id
     `,
     [groupId, userId],
   );
+
+  return result.rows.length > 0;
 }
 
 async function insertHouseholdMembership(
   client: PoolClient,
   householdId: number,
   userId: number,
-) {
+): Promise<void> {
   await client.query(
     `
       INSERT INTO public.household_members (
@@ -70,24 +75,26 @@ async function insertHouseholdMembership(
         user_id,
         role
       )
-      SELECT $1, $2, 'member'
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM public.household_members
-        WHERE household_id = $1
-          AND user_id = $2
-      )
+      VALUES ($1, $2, 'member')
+      ON CONFLICT (household_id, user_id)
+      DO NOTHING
     `,
     [householdId, userId],
   );
 }
 
-export async function POST(_request: NextRequest, context: RouteContext) {
+export async function POST(request: NextRequest, context: RouteContext) {
+  if (!verifyRequestOrigin(request)) {
+    return forbiddenOriginResponse();
+  }
+
   let client: PoolClient | undefined;
   let transactionStarted = false;
 
+  const systemMessages: SavedGroupSystemMessage[] = [];
+  const newlyJoinedGroupIds: number[] = [];
+
   try {
-    // 1. Authenticate the user.
     const user = await getCurrentUser();
 
     if (!user) {
@@ -98,14 +105,8 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Important:
-    // getCurrentUser() must represent an authenticated
-    // account whose email ownership has been verified.
-    // If your auth system allows unverified emails,
-    // enforce email verification before this endpoint
-    // can grant group access.
-
-    // 2. Validate the invitation token.
+    // Authentication must enforce verified email
+    // ownership before invitation acceptance.
     const { token } = await context.params;
 
     if (!/^[a-f0-9]{64}$/i.test(token)) {
@@ -114,27 +115,22 @@ export async function POST(_request: NextRequest, context: RouteContext) {
 
     const tokenHash = createHash("sha256").update(token).digest("hex");
 
-    // 3. Start a database transaction.
     client = await pool.connect();
 
     await client.query("BEGIN");
     transactionStarted = true;
 
-    // 4. Find and lock the invitation.
-    //
-    // FOR UPDATE prevents two requests from
-    // accepting the same invitation simultaneously.
     const invitationResult = await client.query<InvitationRow>(
       `
           SELECT
             i.id,
             i.group_id,
-            g.household_id,
             i.invited_email,
+            i.invited_by,
             i.status,
             i.expires_at
           FROM public.household_group_invitations i
-          INNER JOIN public.household_groups g
+          JOIN public.household_groups g
             ON g.id = i.group_id
           WHERE i.token_hash = $1
           FOR UPDATE OF i
@@ -142,13 +138,12 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       [tokenHash],
     );
 
-    if (invitationResult.rowCount === 0) {
+    const invitation = invitationResult.rows[0];
+
+    if (!invitation) {
       throw new ApiError(404, "INVITATION_NOT_FOUND", "Invitation not found.");
     }
 
-    const invitation = invitationResult.rows[0];
-
-    // 5. Validate invitation status.
     if (invitation.status !== "pending") {
       throw new ApiError(
         410,
@@ -157,8 +152,9 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // 6. Validate expiration.
-    if (new Date(invitation.expires_at).getTime() <= Date.now()) {
+    const expiresAt = new Date(invitation.expires_at).getTime();
+
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       throw new ApiError(
         410,
         "INVITATION_EXPIRED",
@@ -166,23 +162,19 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // 7. Verify the invited email matches the
-    // authenticated account.
-    const invitedEmail = invitation.invited_email.trim().toLowerCase();
-
-    const currentEmail = user.email.trim().toLowerCase();
-
-    if (invitedEmail !== currentEmail) {
+    if (
+      invitation.invited_email.trim().toLowerCase() !==
+      user.email.trim().toLowerCase()
+    ) {
       throw new ApiError(
         403,
         "EMAIL_MISMATCH",
-        `This invitation was sent to ${invitedEmail}. Please sign in using that email address.`,
+        "Please sign in with the email address that received this invitation.",
       );
     }
 
-    // 8. Lock the user row to serialize membership
-    // changes for this user through this workflow.
-    const userResult = await client.query(
+    // Serialize membership changes for this user.
+    const lockedUser = await client.query(
       `
         SELECT id
         FROM public.users
@@ -192,7 +184,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       [user.id],
     );
 
-    if (userResult.rowCount === 0) {
+    if (!lockedUser.rowCount) {
       throw new ApiError(
         401,
         "UNAUTHORIZED",
@@ -200,8 +192,6 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // 9. Retrieve the exact target groups selected
-    // when the invitation was created.
     const targetsResult = await client.query<TargetGroupRow>(
       `
           SELECT
@@ -210,7 +200,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
             g.household_id,
             g.is_default
           FROM public.household_group_invitation_targets t
-          INNER JOIN public.household_groups g
+          JOIN public.household_groups g
             ON g.id = t.group_id
           WHERE t.invitation_id = $1
           ORDER BY g.is_default DESC, g.id ASC
@@ -228,26 +218,11 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // 10. Validate all target groups belong to the
-    // originating household.
-    const invalidTarget = targetGroups.find(
-      (group) => Number(group.household_id) !== Number(invitation.household_id),
-    );
-
-    if (invalidTarget) {
-      throw new ApiError(
-        409,
-        "INVALID_INVITATION_TARGET",
-        "This invitation contains an invalid group.",
-      );
-    }
-
-    // The originating group must always be included.
-    const includesOriginGroup = targetGroups.some(
-      (group) => Number(group.id) === Number(invitation.group_id),
-    );
-
-    if (!includesOriginGroup) {
+    if (
+      !targetGroups.some(
+        (group) => Number(group.id) === Number(invitation.group_id),
+      )
+    ) {
       throw new ApiError(
         409,
         "INVALID_INVITATION_TARGET",
@@ -255,40 +230,133 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // 11. Determine whether this invitation includes
-    // Home Circle.
-    const homeCircleGroups = targetGroups.filter((group) => group.is_default);
+    // Private groups can be independent.
+    // At most one Main Household is allowed.
+    const mainGroups = targetGroups.filter((group) => group.is_default);
 
-    if (homeCircleGroups.length > 1) {
+    if (mainGroups.length > 1) {
       throw new ApiError(
         409,
-        "INVALID_HOME_CIRCLE",
-        "This invitation contains multiple default groups.",
+        "INVALID_MAIN_GROUP",
+        "An invitation cannot include multiple Main Households.",
       );
     }
 
-    const includesHomeCircle = homeCircleGroups.length === 1;
+    const mainGroup = mainGroups[0] ?? null;
 
-    // 12. Add the household membership ONLY when
-    // Home Circle is included.
-    //
-    // This is the core Nomi membership rule:
-    //
-    // Household membership = Home Circle membership.
-    if (includesHomeCircle) {
-      await insertHouseholdMembership(client, invitation.household_id, user.id);
+    const includesHousehold = mainGroup !== null;
+
+    if (mainGroup && mainGroup.household_id === null) {
+      throw new ApiError(
+        409,
+        "INVALID_MAIN_GROUP",
+        "Main Household is not configured correctly.",
+      );
     }
 
-    // 13. Add the user to each invited group.
-    //
-    // Existing memberships are preserved.
-    // Existing owner/admin roles are not changed.
+    // The inviter must still manage every target.
+    const targetIds = targetGroups.map((group) => Number(group.id));
+
+    const permitted = await client.query<{
+      group_id: number;
+    }>(
+      `
+        SELECT group_id
+        FROM public.household_group_members
+        WHERE user_id = $1
+          AND group_id = ANY($2::int[])
+          AND role IN ('owner', 'admin')
+      `,
+      [invitation.invited_by, targetIds],
+    );
+
+    if (permitted.rows.length !== new Set(targetIds).size) {
+      throw new ApiError(
+        409,
+        "INVITATION_PERMISSIONS_CHANGED",
+        "The inviter no longer manages every selected group. Please request a new invitation.",
+      );
+    }
+
+    let householdName: string | null = null;
+
+    if (mainGroup?.household_id != null) {
+      const existingHousehold = await client.query<{
+        household_id: number;
+      }>(
+        `
+            SELECT household_id
+            FROM public.household_members
+            WHERE user_id = $1
+            LIMIT 1
+          `,
+        [user.id],
+      );
+
+      if (
+        existingHousehold.rows[0] &&
+        Number(existingHousehold.rows[0].household_id) !==
+          Number(mainGroup.household_id)
+      ) {
+        throw new ApiError(
+          409,
+          "HOUSEHOLD_ALREADY_EXISTS",
+          "You already belong to another household. Ask for a private-group-only invitation.",
+        );
+      }
+
+      const householdResult = await client.query<{ name: string }>(
+        `
+            SELECT name
+            FROM public.households
+            WHERE id = $1
+          `,
+        [mainGroup.household_id],
+      );
+
+      if (!householdResult.rows[0]) {
+        throw new ApiError(
+          409,
+          "INVALID_MAIN_GROUP",
+          "The Main Household no longer exists.",
+        );
+      }
+
+      householdName = householdResult.rows[0].name;
+
+      await insertHouseholdMembership(client, mainGroup.household_id, user.id);
+    }
+
+    // Add each membership and record a system
+    // message only when a new row was inserted.
     for (const group of targetGroups) {
-      await insertGroupMembership(client, group.id, user.id);
+      const inserted = await insertGroupMembership(
+        client,
+        Number(group.id),
+        Number(user.id),
+      );
+
+      if (!inserted) {
+        continue;
+      }
+
+      newlyJoinedGroupIds.push(Number(group.id));
+
+      const systemMessage = await saveGroupSystemMessage(client, {
+        groupId: Number(group.id),
+        actorId: Number(user.id),
+        actorName: user.name,
+        memberId: Number(user.id),
+        memberName: user.name,
+        memberEmail: user.email,
+        invitationId: invitation.id,
+        eventType: "invitation_accepted",
+      });
+
+      systemMessages.push(systemMessage);
     }
 
-    // 14. Mark the invitation as accepted.
-    const acceptedResult = await client.query(
+    const accepted = await client.query(
       `
         UPDATE public.household_group_invitations
         SET
@@ -301,7 +369,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       [invitation.id],
     );
 
-    if (acceptedResult.rowCount !== 1) {
+    if (accepted.rowCount !== 1) {
       throw new ApiError(
         409,
         "INVITATION_UNAVAILABLE",
@@ -309,25 +377,33 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       );
     }
 
-    // 15. Commit all membership changes together.
     await client.query("COMMIT");
     transactionStarted = false;
 
-    const joinedGroups: MembershipResult[] = targetGroups.map((group) => ({
-      groupId: Number(group.id),
-      groupName: group.name,
-      isDefault: group.is_default,
-    }));
+    // Release the transaction connection before
+    // publishing any real-time events.
+    client.release();
+    client = undefined;
 
-    // 16. Return the originating group so the
-    // frontend can open it after acceptance.
+    await Promise.all([
+      publishGroupSystemMessages(systemMessages),
+      notifyGroupMembershipChanges(newlyJoinedGroupIds),
+    ]);
+
     return NextResponse.json(
       {
         message: "Invitation accepted successfully.",
-        householdId: Number(invitation.household_id),
+        householdId: mainGroup?.household_id ?? null,
+        householdName,
         groupId: Number(invitation.group_id),
-        includesHomeCircle,
-        joinedGroups,
+        includesHousehold,
+        includesHomeCircle: includesHousehold,
+        joinedGroups: targetGroups.map((group) => ({
+          groupId: Number(group.id),
+          groupName: group.name,
+          isDefault: group.is_default,
+        })),
+        newlyJoinedGroupIds,
       },
       {
         status: 200,

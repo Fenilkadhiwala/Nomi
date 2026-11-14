@@ -59,6 +59,35 @@ interface AcceptanceResponse {
 
 type AuthState = "checking" | "authenticated" | "unauthenticated";
 
+function getResponseError(data: unknown, fallback: string): string {
+  if (!data || typeof data !== "object") {
+    return fallback;
+  }
+
+  const response = data as {
+    message?: unknown;
+    error?: unknown;
+  };
+
+  if (typeof response.message === "string") {
+    return response.message;
+  }
+
+  if (
+    response.error &&
+    typeof response.error === "object" &&
+    "message" in response.error
+  ) {
+    const message = (response.error as { message?: unknown }).message;
+
+    if (typeof message === "string") {
+      return message;
+    }
+  }
+
+  return fallback;
+}
+
 export default function InvitationPage() {
   const router = useRouter();
   const params = useParams<{ token: string }>();
@@ -75,17 +104,18 @@ export default function InvitationPage() {
   const [currentEmail, setCurrentEmail] = useState<string | null>(null);
 
   const [accepting, setAccepting] = useState(false);
+
   const [acceptError, setAcceptError] = useState<string | null>(null);
 
   const [accepted, setAccepted] = useState(false);
 
   const invitationPath = `/invite/${encodeURIComponent(token)}`;
 
-  // Preserve the invitation URL through login/signup.
   const loginUrl = `/login?next=${encodeURIComponent(invitationPath)}`;
 
   const signupUrl = `/register?next=${encodeURIComponent(invitationPath)}`;
 
+  // Load invitation details.
   useEffect(() => {
     if (!token) {
       setError("Invalid invitation link.");
@@ -107,14 +137,14 @@ export default function InvitationPage() {
           },
         );
 
-        const data = await response.json();
+        const data: unknown = await response.json();
 
         if (!response.ok) {
-          throw new Error(data.message || "Unable to load invitation.");
+          throw new Error(getResponseError(data, "Unable to load invitation."));
         }
 
         if (active) {
-          setInvitation(data);
+          setInvitation(data as InvitationDetails);
         }
       } catch (err) {
         if (active) {
@@ -136,6 +166,7 @@ export default function InvitationPage() {
     };
   }, [token]);
 
+  // Check authentication.
   useEffect(() => {
     let active = true;
 
@@ -169,6 +200,24 @@ export default function InvitationPage() {
     };
   }, []);
 
+  // Determine whether the invitation includes
+  // the household's main group.
+  //
+  // Use isDefault rather than checking for
+  // a hardcoded group name.
+  const includesHousehold =
+    invitation?.groups.some((group) => group.isDefault) ?? false;
+
+  const householdGroup =
+    invitation?.groups.find((group) => group.isDefault) ?? null;
+
+  const householdName = householdGroup?.name ?? null;
+
+  const sourceGroup =
+    invitation?.groups.find((group) => group.id === invitation.groupId) ?? null;
+
+  const sourceIsHousehold = sourceGroup?.isDefault ?? false;
+
   const emailMatches =
     !!invitation &&
     !!currentEmail &&
@@ -176,7 +225,7 @@ export default function InvitationPage() {
       currentEmail.trim().toLowerCase();
 
   const handleAccept = async () => {
-    if (!token || !invitation || accepting || !emailMatches) {
+    if (!token || !invitation || accepting || accepted || !emailMatches) {
       return;
     }
 
@@ -195,7 +244,7 @@ export default function InvitationPage() {
         },
       );
 
-      const data = await response.json();
+      const data: unknown = await response.json();
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -203,18 +252,21 @@ export default function InvitationPage() {
           return;
         }
 
-        throw new Error(data.message || "Unable to accept invitation.");
+        throw new Error(getResponseError(data, "Unable to accept invitation."));
       }
 
       const result = data as AcceptanceResponse;
 
       setAccepted(true);
 
-      // Give the user brief success feedback before
-      // navigating to the invited group.
+      // Open the original invited group.
+      // DashboardShell will verify authorization
+      // and load all accessible groups.
       router.replace(
         `/dashboard?groupId=${encodeURIComponent(String(result.groupId))}`,
       );
+
+      router.refresh();
     } catch (err) {
       setAcceptError(
         err instanceof Error ? err.message : "Unable to accept invitation.",
@@ -276,7 +328,11 @@ export default function InvitationPage() {
           ) : invitation ? (
             <Stack align="center" gap={14}>
               <Avatar size={92} radius="xl" bg="#E4EEE7" c={GREEN}>
-                <UsersThreeIcon size={42} weight="duotone" />
+                {sourceIsHousehold ? (
+                  <HouseIcon size={42} weight="duotone" />
+                ) : (
+                  <UsersThreeIcon size={42} weight="duotone" />
+                )}
               </Avatar>
 
               <Text c={MUTED} fz={13} ta="center">
@@ -310,6 +366,55 @@ export default function InvitationPage() {
                 </Text>
               </Box>
 
+              {/* Membership explanation */}
+              <Box
+                w="100%"
+                p={14}
+                bg="#F4F7F3"
+                style={{
+                  borderRadius: 12,
+                  border: "1px solid #E4EAE2",
+                }}
+              >
+                {includesHousehold ? (
+                  <Group gap={10} align="flex-start" wrap="nowrap">
+                    <HouseIcon size={22} color={GREEN} weight="duotone" />
+
+                    <Box style={{ flex: 1 }}>
+                      <Text fw={650} fz={13} c={TEXT}>
+                        Household invitation
+                      </Text>
+
+                      <Text fz={12} c={MUTED} mt={5} lh={1.6}>
+                        Accepting this invitation will make you a member of{" "}
+                        <Text span fw={600} c={TEXT}>
+                          {householdName}
+                        </Text>
+                        . You'll be able to access its main household group and
+                        any additional groups listed below.
+                      </Text>
+                    </Box>
+                  </Group>
+                ) : (
+                  <Group gap={10} align="flex-start" wrap="nowrap">
+                    <UsersThreeIcon size={22} color={GREEN} weight="duotone" />
+
+                    <Box style={{ flex: 1 }}>
+                      <Text fw={650} fz={13} c={TEXT}>
+                        Private group invitation
+                      </Text>
+
+                      <Text fz={12} c={MUTED} mt={5} lh={1.6}>
+                        You'll join only the private groups listed below. This
+                        invitation doesn't include household membership. If you
+                        don't belong to another household, you can create your
+                        own later.
+                      </Text>
+                    </Box>
+                  </Group>
+                )}
+              </Box>
+
               {/* Selected groups */}
               <Box w="100%" mt={10}>
                 <Text fw={700} fz={14} c={TEXT} mb={12}>
@@ -336,14 +441,19 @@ export default function InvitationPage() {
                           )}
                         </Avatar>
 
-                        <Box style={{ flex: 1 }}>
+                        <Box
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                          }}
+                        >
                           <Text fw={600} fz={13} c={TEXT}>
                             {group.name}
                           </Text>
 
                           <Text fz={11} c={MUTED}>
                             {group.isDefault
-                              ? "Household membership"
+                              ? "Main household group"
                               : "Private group"}
                           </Text>
                         </Box>
@@ -404,8 +514,8 @@ export default function InvitationPage() {
                   </Text>
 
                   <Text fz={12} c={MUTED} ta="center">
-                    Please sign out and sign in using
-                    {` ${invitation.invitedEmail}`} to accept this invitation.
+                    Please sign out and sign in using {invitation.invitedEmail}{" "}
+                    to accept this invitation.
                   </Text>
 
                   <Button

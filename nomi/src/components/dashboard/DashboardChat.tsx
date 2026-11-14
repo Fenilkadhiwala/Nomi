@@ -18,10 +18,18 @@ import {
   ShoppingCartIcon,
   WalletIcon,
   HouseIcon,
+  UserPlusIcon,
+  SignOutIcon,
+  PencilSimpleIcon,
+  InfoIcon,
+  EnvelopeSimpleIcon,
+  CheckCircleIcon,
 } from "@phosphor-icons/react";
 
 import { useEffect, useRef, useState } from "react";
-import Pusher from "pusher-js";
+
+import { getPusherClient } from "@/src/lib/pusher/client";
+
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -34,14 +42,19 @@ import type { AuthUser, ChatMessage } from "@/src/types/types";
 import { getApiError } from "@/src/lib/api/get-api-error";
 import { notify } from "@/src/lib/notifications/notifications";
 import { useGroupStore } from "@/src/store/useGroupStore";
-import { BACKGROUND, BORDER, GREEN, MUTED, TEXT } from "@/src/utils/constants";
 
-// Development-only conversation.
-// Group-specific threads will be implemented separately.
+import { BACKGROUND, BORDER, GREEN, MUTED, TEXT } from "@/src/utils/constants";
 
 interface DashboardChatProps {
   user: AuthUser;
 }
+
+type IncomingChatMessage = Partial<ChatMessage> & {
+  senderId?: string | number;
+  user_id?: string | number;
+  userId?: string | number;
+  createdAt?: string;
+};
 
 function getInitials(name?: string) {
   if (!name) return "?";
@@ -60,12 +73,90 @@ function getTimestamp(message: ChatMessage) {
 
   const date = new Date(message.created_at);
 
-  if (Number.isNaN(date.getTime())) return "";
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
 
   return date.toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function compareMessages(a: ChatMessage, b: ChatMessage) {
+  const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+
+  const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+
+  if (timeA !== timeB) {
+    return timeA - timeB;
+  }
+
+  return Number(a.id) - Number(b.id);
+}
+
+// =====================================================
+// SYSTEM MESSAGE ICONS
+// =====================================================
+
+function getSystemEventIcon(message: ChatMessage) {
+  switch (message.metadata?.event_type) {
+    case "member_added":
+    case "household_member_added":
+      return UserPlusIcon;
+
+    case "member_invited":
+    case "household_member_invited":
+      return EnvelopeSimpleIcon;
+
+    case "invitation_accepted":
+    case "household_invitation_accepted":
+      return CheckCircleIcon;
+
+    case "member_left":
+    case "household_member_left":
+      return SignOutIcon;
+
+    case "group_renamed":
+      return PencilSimpleIcon;
+
+    default:
+      return InfoIcon;
+  }
+}
+
+function normalizeMessage(data: IncomingChatMessage): ChatMessage | null {
+  if (data.id == null) {
+    return null;
+  }
+
+  return {
+    id: String(data.id),
+    role: data.role ?? "user",
+    content: data.content ?? "",
+    sender_id: String(
+      data.sender_id ?? data.senderId ?? data.user_id ?? data.userId ?? "",
+    ),
+    created_at: data.created_at ?? data.createdAt,
+    metadata: data.metadata ?? null,
+  };
+}
+
+function mergeMessages(
+  previous: ChatMessage[],
+  incoming: ChatMessage[],
+): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+
+  for (const message of previous) {
+    byId.set(String(message.id), message);
+  }
+
+  for (const message of incoming) {
+    byId.set(String(message.id), message);
+  }
+
+  return [...byId.values()].sort(compareMessages);
 }
 
 const suggestions = [
@@ -86,6 +177,10 @@ const suggestions = [
   },
 ];
 
+// =====================================================
+// DASHBOARD CHAT
+// =====================================================
+
 export function DashboardChat({ user }: DashboardChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -94,6 +189,7 @@ export function DashboardChat({ user }: DashboardChatProps) {
   const [loadingMessages, setLoadingMessages] = useState(true);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+
   const sendingRef = useRef(false);
 
   const senderId = String(user.id);
@@ -104,8 +200,12 @@ export function DashboardChat({ user }: DashboardChatProps) {
 
   const activeGroup =
     groups.find((group) => group.id === activeGroupId) ?? null;
+
   const threadId = activeGroup ? `group_${activeGroup.id}` : null;
-  console.log("active group", activeGroupId);
+
+  // ===================================================
+  // LOAD GROUP MESSAGES
+  // ===================================================
 
   useEffect(() => {
     let active = true;
@@ -113,20 +213,26 @@ export function DashboardChat({ user }: DashboardChatProps) {
     if (!threadId) {
       setMessages([]);
       setLoadingMessages(false);
+
       return;
     }
 
+    const currentThreadId = threadId;
+
     async function loadMessages() {
       setLoadingMessages(true);
-
       setMessages([]);
 
       try {
-        const fetched = await getMessages(threadId!);
+        const fetched = await getMessages(currentThreadId);
 
-        if (active) {
-          setMessages(fetched);
+        if (!active) {
+          return;
         }
+
+        // Preserve real-time messages received
+        // while the history request was loading.
+        setMessages((previous) => mergeMessages(fetched, previous));
       } catch (error) {
         if (active) {
           notify.error({
@@ -148,7 +254,10 @@ export function DashboardChat({ user }: DashboardChatProps) {
     };
   }, [threadId]);
 
-  // Auto-scroll to latest message
+  // ===================================================
+  // AUTO SCROLL
+  // ===================================================
+
   useEffect(() => {
     const viewport = viewportRef.current;
 
@@ -160,64 +269,56 @@ export function DashboardChat({ user }: DashboardChatProps) {
     });
   }, [messages, loading, loadingMessages]);
 
-  // Subscribe to real-time messages
+  // ===================================================
+  // PUSHER REAL-TIME MESSAGES
+  // ===================================================
 
   useEffect(() => {
     if (!threadId) return;
 
-    const key = process.env.NEXT_PUBLIC_PUSHER_KEY;
-    const cluster = process.env.NEXT_PUBLIC_PUSHER_CLUSTER;
+    let pusher: ReturnType<typeof getPusherClient>;
 
-    if (!key || !cluster) return;
+    try {
+      pusher = getPusherClient();
+    } catch (error) {
+      console.error("Unable to initialize chat updates:", error);
 
-    const pusher = new Pusher(key, { cluster });
+      return;
+    }
 
+    // Matches the server-side system-message helper.
     const channelName = `household-${threadId}`;
+
     const channel = pusher.subscribe(channelName);
 
-    const onNewMessage = (
-      data: Partial<ChatMessage> & {
-        senderId?: string | number;
-        user_id?: string | number;
-        userId?: string | number;
-        createdAt?: string;
-      },
-    ) => {
-      if (data.id == null) return;
+    const onNewMessage = (data: IncomingChatMessage) => {
+      const newMessage = normalizeMessage(data);
 
-      const newMessage: ChatMessage = {
-        id: String(data.id),
-        role: data.role ?? "user",
-        content: data.content ?? "",
-        sender_id: String(
-          data.sender_id ?? data.senderId ?? data.user_id ?? data.userId ?? "",
-        ),
-        created_at: data.created_at ?? data.createdAt,
-      };
+      if (!newMessage) {
+        return;
+      }
 
-      setMessages((previous) => {
-        if (
-          previous.some(
-            (message) => String(message.id) === String(newMessage.id),
-          )
-        ) {
-          return previous;
-        }
-
-        return [...previous, newMessage];
-      });
+      // Prevent duplicate messages when the same
+      // record arrives from history and Pusher.
+      setMessages((previous) => mergeMessages(previous, [newMessage]));
     };
 
     channel.bind("new-message", onNewMessage);
 
     return () => {
       channel.unbind("new-message", onNewMessage);
+
       pusher.unsubscribe(channelName);
-      pusher.disconnect();
+
+      // Do not disconnect the shared Pusher client.
+      // Other dashboard components may use it.
     };
   }, [threadId]);
 
-  // Send message to Nomi
+  // ===================================================
+  // SEND MESSAGE
+  // ===================================================
+
   const handleSend = async (value: string) => {
     const text = value.trim();
 
@@ -246,6 +347,10 @@ export function DashboardChat({ user }: DashboardChatProps) {
       message.role !== "assistant" || Boolean(message.content?.trim()),
   );
 
+  // ===================================================
+  // RENDER
+  // ===================================================
+
   return (
     <Box
       bg={BACKGROUND}
@@ -257,7 +362,6 @@ export function DashboardChat({ user }: DashboardChatProps) {
         overflow: "hidden",
       }}
     >
-      {/* Chat messages */}
       <ScrollArea
         style={{
           flex: 1,
@@ -352,6 +456,69 @@ export function DashboardChat({ user }: DashboardChatProps) {
           )}
 
           {visibleMessages.map((message) => {
+            // =======================================
+            // SYSTEM MESSAGES
+            // =======================================
+
+            if (message.role === "system") {
+              const EventIcon = getSystemEventIcon(message);
+
+              const timestamp = getTimestamp(message);
+
+              return (
+                <Group key={message.id} justify="center" wrap="nowrap">
+                  <Paper
+                    radius="xl"
+                    px={14}
+                    py={8}
+                    bg="#E8EEE9"
+                    style={{
+                      maxWidth: "100%",
+                      border: `1px solid ${BORDER}`,
+                    }}
+                  >
+                    <Group gap={7} justify="center" wrap="nowrap">
+                      <Box
+                        style={{
+                          flexShrink: 0,
+                        }}
+                      >
+                        <EventIcon size={15} color={MUTED} weight="regular" />
+                      </Box>
+
+                      <Text
+                        fz={12}
+                        c={MUTED}
+                        ta="center"
+                        style={{
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {message.content}
+                      </Text>
+
+                      {timestamp && (
+                        <Text
+                          fz={10}
+                          c={MUTED}
+                          style={{
+                            whiteSpace: "nowrap",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {timestamp}
+                        </Text>
+                      )}
+                    </Group>
+                  </Paper>
+                </Group>
+              );
+            }
+
+            // =======================================
+            // NORMAL CHAT MESSAGES
+            // =======================================
+
             const isAssistant = message.role === "assistant";
 
             const isMine =
@@ -479,7 +646,7 @@ export function DashboardChat({ user }: DashboardChatProps) {
         </Stack>
       </ScrollArea>
 
-      {/* Redesigned message composer */}
+      {/* Message composer */}
       <Box
         px={{
           base: 14,
